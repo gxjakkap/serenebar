@@ -1262,6 +1262,9 @@ impl App {
                 self.after_google(),
             ),
             Act::GoogleSignOut => google::sign_out(self.after_google()),
+            Act::GoogleGuide => system::open(
+                "https://github.com/gxjakkap/serenebar/blob/main/docs/google-calendar.md",
+            ),
         }
     }
 

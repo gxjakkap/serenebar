@@ -38,6 +38,7 @@ pub enum Act {
     About,
     GoogleSignIn,
     GoogleSignOut,
+    GoogleGuide,
 }
 
 pub type Hit = ui::Hit<Act>;
@@ -857,12 +858,28 @@ fn feeds(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, flags: &Flags, x0: f32,
             c.hits.push((x0, 330.0, 160.0, 32.0, Act::GoogleSignIn));
         }
     }
-    let note = if flags.google_status.is_empty() && !flags.google {
-        "Needs your own OAuth client. See the README."
+    if flags.google_status.is_empty() && !flags.google {
+        let note = "Needs your own OAuth client. ";
+        let nw = g.measure(note, 10.5, 400);
+        g.text(note, x0, 370.0, cw, 18.0, 10.5, 400, c.p.sub, Align::Left);
+        let link = "How to make one";
+        let lw = g.measure(link, 10.5, 600);
+        g.text(
+            link,
+            x0 + nw,
+            370.0,
+            lw,
+            18.0,
+            10.5,
+            600,
+            c.accent,
+            Align::Left,
+        );
+        c.hits.push((x0 + nw, 370.0, lw, 18.0, Act::GoogleGuide));
     } else {
-        flags.google_status.as_str()
-    };
-    g.text(note, x0, 370.0, cw, 18.0, 10.5, 400, c.p.sub, Align::Left);
+        let note = flags.google_status.as_str();
+        g.text(note, x0, 370.0, cw, 18.0, 10.5, 400, c.p.sub, Align::Left);
+    }
 
     // city suggestions, over whatever is below the field and ahead of it in the hits
     if !st.places.is_empty() {
