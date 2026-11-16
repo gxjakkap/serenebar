@@ -337,6 +337,7 @@ pub struct Flags {
     pub screenshots: bool,
     pub google: bool,
     pub google_status: String,
+    pub google_account: String,
     pub update: Option<String>, // a newer release's version
 }
 
@@ -840,17 +841,15 @@ fn feeds(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, flags: &Flags, x0: f32,
 
     c.title(g, "Google Calendar", x0, 258.0);
     if flags.google {
-        g.text(
-            "Signed in. Calendars you tick in Google Calendar show up here.",
-            x0,
-            288.0,
-            cw,
-            18.0,
-            11.0,
-            500,
-            c.p.text,
-            Align::Left,
-        );
+        let line = if flags.google_account.is_empty() {
+            "Signed in. Calendars you tick in Google Calendar show up here.".to_string()
+        } else {
+            format!(
+                "Signed in as {}. Your ticked calendars show up here.",
+                flags.google_account
+            )
+        };
+        g.text(&line, x0, 288.0, cw, 18.0, 11.0, 500, c.p.text, Align::Left);
         g.fill_rr(x0, 318.0, 110.0, 32.0, 9.0, c.p.card);
         g.text(
             "Sign out",

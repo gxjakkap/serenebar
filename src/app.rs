@@ -1124,6 +1124,7 @@ impl App {
             screenshots: self.capturable,
             google: google::connected(),
             google_status: google::status(),
+            google_account: google::account(),
             update: self.d.update.as_ref().map(|r| r.version.clone()),
         };
         let Some(p) = &mut self.prefs else { return };

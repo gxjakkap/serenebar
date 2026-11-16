@@ -53,6 +53,17 @@ pub fn parse_calendar_ids(body: &str) -> Vec<String> {
         .collect()
 }
 
+/// The signed-in account's address: the primary calendar's ID is the account's email.
+pub fn primary_email(body: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    v["items"]
+        .as_array()?
+        .iter()
+        .find(|c| c["primary"].as_bool() == Some(true))?["id"]
+        .as_str()
+        .map(String::from)
+}
+
 /// What to tell the user when the Calendar API answers with an error instead of data.
 pub fn api_error(body: &str) -> Option<String> {
     let v: Value = serde_json::from_str(body).ok()?;
@@ -136,6 +147,7 @@ mod win {
     use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
 
     static STATUS: Mutex<String> = Mutex::new(String::new());
+    static ACCOUNT: Mutex<String> = Mutex::new(String::new()); // known after the first fetch
     static ACCESS: Mutex<Option<(String, i64)>> = Mutex::new(None); // access token and when it expires
 
     const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
@@ -151,6 +163,11 @@ mod win {
 
     fn token_path() -> std::path::PathBuf {
         Settings::path().with_file_name("google.token")
+    }
+
+    /// The signed-in account's email, empty until the first calendar fetch.
+    pub fn account() -> String {
+        ACCOUNT.lock().unwrap().clone()
     }
 
     pub fn connected() -> bool {
@@ -309,6 +326,7 @@ mod win {
             }
             let _ = std::fs::remove_file(token_path());
             *ACCESS.lock().unwrap() = None;
+            ACCOUNT.lock().unwrap().clear();
             set_status("");
             done();
         });
@@ -357,6 +375,9 @@ mod win {
             Some(body)
         };
         let list = get(&format!("{api}/users/me/calendarList?minAccessRole=reader"))?;
+        if let Some(email) = primary_email(&list) {
+            *ACCOUNT.lock().unwrap() = email;
+        }
         let mut ids = parse_calendar_ids(&list);
         if ids.is_empty() {
             ids.push("primary".into());
@@ -409,6 +430,8 @@ mod tests {
     fn google_events_and_calendars() {
         let cal = r#"{"items":[{"id":"me@gmail.com","primary":true},{"id":"holidays#x","selected":true},{"id":"hidden","selected":false}]}"#;
         assert_eq!(parse_calendar_ids(cal), ["me@gmail.com", "holidays#x"]);
+        assert_eq!(primary_email(cal).as_deref(), Some("me@gmail.com"));
+        assert_eq!(primary_email(r#"{"items":[{"id":"x"}]}"#), None);
         let ev = r#"{"items":[
             {"summary":"Standup","location":"Zoom","start":{"dateTime":"2026-11-16T10:00:00+07:00"}},
             {"summary":"Gone","status":"cancelled","start":{"dateTime":"2026-11-16T11:00:00Z"}},
