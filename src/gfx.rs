@@ -64,6 +64,7 @@ pub struct Gfx {
     dwrite: IDWriteFactory,
     wic: IWICImagingFactory,
     brush: ID2D1SolidColorBrush,
+    shadow: ID2D1Effect, // under dock icons
     round: Option<ID2D1StrokeStyle>,
     font: HSTRING,
     formats: RefCell<HashMap<(u32, i32, i32), IDWriteTextFormat>>,
@@ -166,6 +167,7 @@ impl Gfx {
                 .CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE)?;
             dc.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE); // ClearType needs an opaque target
             let brush = dc.CreateSolidColorBrush(&rgba(0, 1.0), None)?;
+            let shadow = dc.CreateEffect(&CLSID_D2D1Shadow)?;
             let base: &ID2D1Factory = &factory;
             let round = base
                 .CreateStrokeStyle(
@@ -206,6 +208,7 @@ impl Gfx {
                 dwrite,
                 wic,
                 brush,
+                shadow,
                 round,
                 font,
                 formats: RefCell::default(),
@@ -899,6 +902,62 @@ impl Gfx {
                 None,
                 None,
             )
+        }
+    }
+
+    /// A soft shadow of `b`'s shape, under where `bitmap` would put it. `blur` (the standard
+    /// deviation) and `dy` are in the same units as `x` and `y`.
+    pub fn bitmap_shadow(
+        &self,
+        b: &ID2D1Bitmap1,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        blur: f32,
+        dy: f32,
+        alpha: f32,
+    ) {
+        unsafe {
+            let size = b.GetSize();
+            if size.width <= 0.0 || size.height <= 0.0 {
+                return;
+            }
+            let (sx, sy) = (w / size.width, h / size.height);
+            self.shadow.SetInput(0, b, true);
+            // the blur runs in the bitmap's own size, before it's scaled to the icon
+            set_f32(
+                &self.shadow,
+                D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION.0 as u32,
+                blur / sx,
+            );
+            let _ = self.shadow.SetValue(
+                D2D1_SHADOW_PROP_COLOR.0 as u32,
+                D2D1_PROPERTY_TYPE_VECTOR4,
+                &[0f32, 0.0, 0.0, alpha].map(f32::to_le_bytes).concat(),
+            );
+            let Ok(img) = self.shadow.GetOutput() else {
+                return;
+            };
+            let mut old = Matrix3x2::default();
+            self.dc.GetTransform(&mut old);
+            let place = Matrix3x2 {
+                M11: sx,
+                M12: 0.0,
+                M21: 0.0,
+                M22: sy,
+                M31: x,
+                M32: y + dy,
+            };
+            self.dc.SetTransform(&(place * old));
+            self.dc.DrawImage(
+                &img,
+                None,
+                None,
+                D2D1_INTERPOLATION_MODE_LINEAR,
+                D2D1_COMPOSITE_MODE_SOURCE_OVER,
+            );
+            self.dc.SetTransform(&old);
         }
     }
 

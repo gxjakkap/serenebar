@@ -1430,7 +1430,11 @@ fn icon(g: &Gfx, v: &View, d: &Data, j: usize, ix: f32, iy: f32, m: f32, y: f32,
     }
     let a = &d.apps[j - 1];
     match g.cached(a.key()) {
-        Some(b) => g.bitmap(&b, ix, iy, s, s),
+        Some(b) => {
+            // lifts the icon off light glass
+            g.bitmap_shadow(&b, ix, iy, s, s, 2.0 * k * m, 1.5 * k * m, 0.35);
+            g.bitmap(&b, ix, iy, s, s)
+        }
         None => g.fill_rr(ix, iy, s, s, 9.0 * k * m, v.th.chip),
     }
     if !a.windows.is_empty() {
