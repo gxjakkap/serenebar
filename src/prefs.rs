@@ -41,6 +41,7 @@ pub enum Act {
     GoogleSignOut,
     GoogleGuide,
     Update,
+    CheckUpdate,
 }
 
 pub type Hit = ui::Hit<Act>;
@@ -339,6 +340,7 @@ pub struct Flags {
     pub google_status: String,
     pub google_account: String,
     pub update: Option<String>, // a newer release's version
+    pub update_note: &'static str,
 }
 
 pub const SIZE: (f32, f32) = (820.0, 690.0);
@@ -516,21 +518,27 @@ pub fn draw(g: &Gfx, st: &State, s: &Settings, flags: Flags, w: f32, h: f32) -> 
         );
         c.hits.push((x, y, tw, 32.0, Act::Tab(tab)));
     }
-    if let Some(v) = &flags.update {
-        let y = h - 118.0;
-        let t = format!("Update to {v}");
-        g.text(
-            &t,
-            24.0,
-            y,
-            SIDEBAR - 36.0,
-            30.0,
-            12.5,
-            600,
-            c.accent,
-            Align::Left,
-        );
-        c.hits.push((16.0, y, SIDEBAR - 32.0, 30.0, Act::Update));
+    // a newer release, else the check button or how the last check went
+    let (t, col, act) = match (&flags.update, flags.update_note) {
+        (Some(v), _) => (format!("Update to {v}"), c.accent, Some(Act::Update)),
+        (None, "") => ("Check for updates".into(), c.p.sub, Some(Act::CheckUpdate)),
+        (None, "Checking…") => ("Checking…".into(), c.p.sub, None),
+        (None, note) => (note.into(), c.p.sub, Some(Act::CheckUpdate)), // click to check again
+    };
+    let y = h - 118.0;
+    g.text(
+        &t,
+        24.0,
+        y,
+        SIDEBAR - 36.0,
+        30.0,
+        12.5,
+        600,
+        col,
+        Align::Left,
+    );
+    if let Some(act) = act {
+        c.hits.push((16.0, y, SIDEBAR - 32.0, 30.0, act));
     }
     for (i, (name, act, col)) in [
         ("About serenebar", Act::About, c.p.sub),

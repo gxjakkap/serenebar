@@ -745,7 +745,7 @@ impl App {
         let f = feeds::snapshot();
         (self.d.weather, self.d.events, self.d.claude, self.d.codex) =
             (f.weather, f.events, f.claude, f.codex);
-        self.d.update = f.update;
+        (self.d.update, self.d.update_note) = (f.update, f.update_note);
         let c = controls::snapshot();
         let id = c.media.as_ref().map_or(0, |m| m.art_id);
         if id != self.art_id {
@@ -1126,6 +1126,7 @@ impl App {
             google_status: google::status(),
             google_account: google::account(),
             update: self.d.update.as_ref().map(|r| r.version.clone()),
+            update_note: self.d.update_note,
         };
         let Some(p) = &mut self.prefs else { return };
         let city = prefs::Field::City;
@@ -1288,6 +1289,9 @@ impl App {
             ),
             Act::GoogleSignOut => google::sign_out(self.after_google()),
             Act::Update => self.act(Action::Update, 0.0),
+            Act::CheckUpdate => {
+                let _ = self.feeds.send(feeds::Msg::CheckUpdate);
+            }
             Act::GoogleGuide => system::open(
                 "https://github.com/gxjakkap/serenebar/blob/main/docs/google-calendar.md",
             ),

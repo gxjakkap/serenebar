@@ -167,6 +167,7 @@ pub struct Data {
     pub claude: Option<Vec<Limit>>,
     pub codex: Option<Vec<Limit>>,
     pub update: Option<crate::update::Release>, // a newer release than this build
+    pub update_note: &'static str,              // how a check from Settings went
     pub volume: Option<crate::controls::Volume>,
     pub wifi: Option<bool>,
     pub vpn: Option<bool>,

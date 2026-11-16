@@ -18,6 +18,8 @@ pub struct State {
     pub claude: Option<Vec<Limit>>,
     pub codex: Option<Vec<Limit>>,
     pub update: Option<crate::update::Release>,
+    /// How a check from Settings went: "Checking…", "Up to date" and so on, empty before one.
+    pub update_note: &'static str,
 }
 
 static STATE: Mutex<State> = Mutex::new(State {
@@ -26,6 +28,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     claude: None,
     codex: None,
     update: None,
+    update_note: "",
 });
 
 pub fn snapshot() -> State {
@@ -48,6 +51,8 @@ pub enum Msg {
     Config(FeedConfig),
     /// The Google account changed: drop the events and fetch everything again now.
     Refetch,
+    /// Settings asked: look for a newer release now.
+    CheckUpdate,
 }
 
 /// Weather and calendar every 15 minutes, Claude limits every 5, Codex limits every minute,
@@ -59,7 +64,7 @@ pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
         let mut cfg = loop {
             match rx.recv() {
                 Ok(Msg::Config(c)) => break c,
-                Ok(Msg::Refetch) => {}
+                Ok(_) => {}
                 Err(_) => return,
             }
         };
@@ -70,6 +75,7 @@ pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
         let mut place = fixed(&cfg);
         let mut minute = 0u64;
         let mut next_release_check = Instant::now();
+        let mut asked = false; // a check from Settings, which wants to hear how it went
         loop {
             let mut changed = false;
             if minute.is_multiple_of(15) {
@@ -123,7 +129,17 @@ pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
                 // a failed check (offline at login, say) tries again in an hour
                 let wait = if found.is_some() { 24 } else { 1 };
                 next_release_check = Instant::now() + Duration::from_secs(wait * 3600);
-                if let Some(r) = found.filter(crate::update::is_update) {
+                let newer = found.as_ref().is_some_and(crate::update::is_update);
+                if asked {
+                    STATE.lock().unwrap().update_note = match (&found, newer) {
+                        (None, _) => "Couldn't reach GitHub",
+                        (Some(_), false) => "serenebar is up to date",
+                        (Some(_), true) => "",
+                    };
+                    asked = false;
+                    changed = true;
+                }
+                if let Some(r) = found.filter(|_| newer) {
                     STATE.lock().unwrap().update = Some(r);
                     changed = true;
                 }
@@ -155,6 +171,12 @@ pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
                 Ok(Msg::Refetch) => {
                     STATE.lock().unwrap().events.clear();
                     minute = 0;
+                }
+                Ok(Msg::CheckUpdate) => {
+                    STATE.lock().unwrap().update_note = "Checking…";
+                    crate::system::notify(h);
+                    next_release_check = Instant::now();
+                    asked = true;
                 }
                 Err(RecvTimeoutError::Disconnected) => return,
                 Err(RecvTimeoutError::Timeout) => {}
