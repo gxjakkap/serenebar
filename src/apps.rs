@@ -379,17 +379,18 @@ mod win {
         }
     }
 
-    /// The icon Explorer shows for a shell item. The bitmap is 32-bit with premultiplied alpha.
+    /// The icon Explorer shows for a shell item, at least `px` wide. The bitmap is 32-bit with
+    /// premultiplied alpha.
     pub fn app_image(names: &[String], px: u32) -> Option<HBITMAP> {
+        // Icons come in fixed sizes (16, 32, 48, 256). At any other size the shell resizes with
+        // no smoothing, which leaves jagged edges, so take the 256 one and let Direct2D's cubic
+        // filter shrink it when drawing.
+        let px = px.max(256) as i32;
         names.iter().find_map(|n| unsafe {
             let f: IShellItemImageFactory =
                 SHCreateItemFromParsingName(&HSTRING::from(n), None).ok()?;
-            // BIGGERSIZEOK hands back the next native size up instead of the shell's blocky upscale
             f.GetImage(
-                SIZE {
-                    cx: px as i32,
-                    cy: px as i32,
-                },
+                SIZE { cx: px, cy: px },
                 SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK,
             )
             .ok()
