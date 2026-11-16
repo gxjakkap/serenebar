@@ -1230,9 +1230,26 @@ impl App {
                 }
                 s.controls.sort_by_key(|c| *c as usize);
             }),
-            Act::Toggle(i) => {
+            Act::Remove(i) => {
                 let Some(p) = &mut self.prefs else { return };
-                p.st.toggle(i);
+                p.st.remove(i);
+                let widgets = widgets_from_rows(&p.st.rows);
+                self.change(|s| s.widgets = widgets);
+            }
+            Act::Add(group) => {
+                let Some(p) = &mut self.prefs else { return };
+                let hidden: Vec<usize> =
+                    (0..p.st.rows.len()).filter(|&i| !p.st.rows[i].on).collect();
+                let cmd = popup_menu(p.hwnd, true, |m| unsafe {
+                    for (n, &i) in hidden.iter().enumerate() {
+                        let label = HSTRING::from(p.st.rows[i].widget.label());
+                        let _ = AppendMenuW(m, MF_STRING, n + 1, &label);
+                    }
+                });
+                let Some(&i) = (cmd as usize).checked_sub(1).and_then(|n| hidden.get(n)) else {
+                    return;
+                };
+                p.st.add(i, group);
                 let widgets = widgets_from_rows(&p.st.rows);
                 self.change(|s| s.widgets = widgets);
             }

@@ -29,7 +29,8 @@ pub enum Act {
     Fahrenheit(bool),
     Startup,
     Screenshots,
-    Toggle(usize),
+    Remove(usize),
+    Add(usize), // a group's +: pick a hidden widget to show there
     Drag(usize),
     Control(Control),
     Focus(Field),
@@ -85,9 +86,9 @@ const SUGGESTION: f32 = 28.0;
 const CITY_Y: f32 = 104.0; // the City field, which its suggestions hang from
 const ROW: f32 = 30.0;
 
-/// Where the widget list goes: the top of every group name, the top of every row (indexed
+/// Where the widget list goes: the top of every group name, the top of every shown row (indexed
 /// like `rows`) and the places a dragged row can land: (line y, group, position among that
-/// group's other rows). Empty groups keep one row of room.
+/// group's other shown rows). Empty groups keep one row of room. Hidden rows aren't listed.
 struct ListLayout {
     heads: [f32; GROUPS],
     rows: Vec<f32>,
@@ -104,7 +105,9 @@ fn widget_layout(rows: &[WidgetRow]) -> ListLayout {
     for (g, head) in heads.iter_mut().enumerate() {
         *head = y;
         y += GROUP_HEAD;
-        let members: Vec<usize> = (0..rows.len()).filter(|&i| rows[i].group == g).collect();
+        let members: Vec<usize> = (0..rows.len())
+            .filter(|&i| rows[i].on && rows[i].group == g)
+            .collect();
         for (k, &i) in members.iter().enumerate() {
             gaps.push((y, g, k));
             ys[i] = y;
@@ -138,7 +141,7 @@ fn drop_target(rows: &[WidgetRow], row: usize, y: f32) -> (usize, usize) {
     let (_, g, k) = nearest_gap(rows, y);
     // the gaps count the dragged row itself; positions after it shift up by one
     let mine = (0..rows.len())
-        .filter(|&i| rows[i].group == g)
+        .filter(|&i| rows[i].on && rows[i].group == g)
         .position(|i| i == row);
     (
         g,
@@ -271,8 +274,14 @@ impl State {
         Some(p)
     }
 
-    pub fn toggle(&mut self, row: usize) {
-        self.rows[row].on = !self.rows[row].on;
+    pub fn remove(&mut self, row: usize) {
+        self.rows[row].on = false;
+    }
+
+    /// Shows hidden row `row` at the end of `group`.
+    pub fn add(&mut self, row: usize, group: usize) {
+        self.rows[row].on = true;
+        move_row(&mut self.rows, row, group, usize::MAX);
     }
 
     /// Picks up a widget row by its grip, `y` DIPs down the window.
@@ -678,10 +687,17 @@ fn widgets(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, x0: f32, cw: f32) {
     for (gi, gname) in ["Left", "Centre", "Right"].iter().enumerate() {
         let gy = list.heads[gi];
         g.text(gname, x0, gy, w3, 20.0, 10.5, 600, c.p.sub, Align::Left);
-        if !st.rows.iter().any(|r| r.group == gi) {
+        if st.drag.is_none() && st.rows.iter().any(|r| !r.on) {
+            let (bx, by) = (x0 + w3 - 26.0, gy - 1.0);
+            g.fill_rr(bx, by, 20.0, 20.0, 6.0, c.p.card);
+            g.fill_rr(bx + 5.0, by + 9.25, 10.0, 1.5, 0.75, c.p.text);
+            g.fill_rr(bx + 9.25, by + 5.0, 1.5, 10.0, 0.75, c.p.text);
+            c.hits.push((bx - 4.0, by - 2.0, 28.0, 24.0, Act::Add(gi)));
+        }
+        if !st.rows.iter().any(|r| r.on && r.group == gi) {
             g.stroke_rr(x0, gy + GROUP_HEAD, w3, ROW - 4.0, 8.0, c.p.border, 1.0);
             g.text(
-                "Drag a widget here",
+                "Drag a widget here, or add one with +",
                 x0,
                 gy + GROUP_HEAD,
                 w3,
@@ -694,7 +710,7 @@ fn widgets(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, x0: f32, cw: f32) {
         }
     }
     let held = st.drag.as_ref().filter(|d| d.moved);
-    for (i, r) in st.rows.iter().enumerate() {
+    for (i, r) in st.rows.iter().enumerate().filter(|(_, r)| r.on) {
         let lifted = held.is_some_and(|d| d.row == i);
         let y = if lifted {
             held.unwrap().y - held.unwrap().grab
@@ -921,33 +937,21 @@ fn feeds(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, flags: &Flags, x0: f32,
 }
 
 fn row(g: &Gfx, c: &mut Ctx, st: &State, i: usize, r: &WidgetRow, x: f32, y: f32, w: f32) {
-    let label = r.widget.label();
-    g.fill_rr(
-        x,
-        y + 5.0,
-        32.0,
-        20.0,
-        10.0,
-        if r.on { c.accent } else { c.p.card },
-    );
-    g.fill_circle(
-        if r.on { x + 22.0 } else { x + 10.0 },
-        y + 15.0,
-        7.0,
-        rgba(0xFFFFFF, 1.0),
-    );
+    // remove: a minus in a circle
+    g.fill_circle(x + 10.0, y + ROW / 2.0, 9.0, c.p.card);
+    g.fill_rr(x + 5.5, y + ROW / 2.0 - 0.75, 9.0, 1.5, 0.75, c.p.sub);
     if st.drag.is_none() {
-        c.hits.push((x - 2.0, y, 36.0, ROW, Act::Toggle(i)));
+        c.hits.push((x - 2.0, y, 26.0, ROW, Act::Remove(i)));
     }
     g.text(
-        label,
-        x + 42.0,
+        r.widget.label(),
+        x + 30.0,
         y,
-        w - 80.0,
+        w - 68.0,
         ROW,
         12.0,
         500,
-        if r.on { c.p.text } else { c.p.sub },
+        c.p.text,
         Align::Left,
     );
     // grip: two columns of dots
@@ -962,6 +966,6 @@ fn row(g: &Gfx, c: &mut Ctx, st: &State, i: usize, r: &WidgetRow, x: f32, y: f32
         g.fill_circle(x + w - 16.0 + dx, y + ROW / 2.0 + dy, 1.4, c.p.sub);
     }
     if st.drag.is_none() {
-        c.hits.push((x + 38.0, y, w - 38.0, ROW, Act::Drag(i)));
+        c.hits.push((x + 24.0, y, w - 24.0, ROW, Act::Drag(i)));
     }
 }

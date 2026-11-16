@@ -463,13 +463,13 @@ pub fn widget_rows(slots: &[Slot]) -> Vec<WidgetRow> {
     rows
 }
 
-/// Moves row `from` into `group`, before the `k`-th other row of that group (or to its end).
-/// Only the order within a group matters, so the rest of the vector keeps its order.
+/// Moves row `from` into `group`, before the `k`-th other shown row of that group (or to its
+/// end). Only the order of shown rows within a group matters, so the rest keep their order.
 pub fn move_row(rows: &mut Vec<WidgetRow>, from: usize, group: usize, k: usize) {
     let mut r = rows.remove(from);
     r.group = group;
     let members: Vec<usize> = (0..rows.len())
-        .filter(|&i| rows[i].group == group)
+        .filter(|&i| rows[i].on && rows[i].group == group)
         .collect();
     let at = match (members.get(k), members.last()) {
         (Some(&i), _) => i,
@@ -615,6 +615,21 @@ mod tests {
         assert_eq!(
             ids(&rows),
             ["|", "media", "|", "clock", "claude", "weather"]
+        );
+        // hidden rows don't count: adding one puts it after the group's last shown row
+        rows.push(WidgetRow {
+            widget: Battery,
+            on: false,
+            group: 0,
+        });
+        let i = rows.iter().position(|r| r.widget == Claude).unwrap();
+        rows[i].on = false;
+        let b = rows.len() - 1;
+        rows[b].on = true;
+        move_row(&mut rows, b, 2, usize::MAX);
+        assert_eq!(
+            ids(&rows),
+            ["|", "media", "|", "clock", "weather", "battery"]
         );
     }
 
