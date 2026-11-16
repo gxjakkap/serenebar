@@ -745,6 +745,7 @@ impl App {
         let f = feeds::snapshot();
         (self.d.weather, self.d.events, self.d.claude, self.d.codex) =
             (f.weather, f.events, f.claude, f.codex);
+        self.d.update = f.update;
         let c = controls::snapshot();
         let id = c.media.as_ref().map_or(0, |m| m.art_id);
         if id != self.art_id {
@@ -855,6 +856,11 @@ impl App {
                 }
             }
             Action::TaskManager => system::open("taskmgr.exe"),
+            Action::Update => {
+                if let Some(r) = &self.d.update {
+                    system::open(&r.url)
+                }
+            }
             Action::App(i) => {
                 if let Some(item) = self.d.apps.get(i) {
                     apps::activate(item)
@@ -1118,6 +1124,7 @@ impl App {
             screenshots: self.capturable,
             google: google::connected(),
             google_status: google::status(),
+            update: self.d.update.as_ref().map(|r| r.version.clone()),
         };
         let Some(p) = &mut self.prefs else { return };
         let city = prefs::Field::City;
@@ -1279,6 +1286,7 @@ impl App {
                 self.after_google(),
             ),
             Act::GoogleSignOut => google::sign_out(self.after_google()),
+            Act::Update => self.act(Action::Update, 0.0),
             Act::GoogleGuide => system::open(
                 "https://github.com/gxjakkap/serenebar/blob/main/docs/google-calendar.md",
             ),
@@ -1453,6 +1461,10 @@ impl App {
                 MenuAct::Pref(Act::Screenshots),
             );
             line(root);
+            if let Some(r) = &self.d.update {
+                let t = format!("Update to {}…", r.version);
+                add(root, MF_STRING, &t, MenuAct::Bar(Action::Update));
+            }
             add(root, MF_STRING, "Settings…", MenuAct::Bar(Action::Settings));
             add(
                 root,

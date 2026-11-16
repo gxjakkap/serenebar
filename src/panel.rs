@@ -125,7 +125,7 @@ pub fn draw(g: &Gfx, st: &State, d: &Data, s: &Settings, w: f32, h: f32) -> Vec<
         Panel::Weather => weather(g, &p, d, w),
         Panel::Claude | Panel::Codex => ai(g, &p, st.kind, d, w, h),
         Panel::Controls => controls(g, &p, d, accent, w, h, &mut hits),
-        Panel::About => about(g, &p, accent, w, h, &mut hits),
+        Panel::About => about(g, &p, d, accent, w, h, &mut hits),
         Panel::Tray => tray(g, &p, st, d, w, h, &mut hits),
     }
     hits
@@ -844,7 +844,7 @@ fn controls(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Ve
     ));
 }
 
-fn about(g: &Gfx, p: &Pal, accent: C, w: f32, h: f32, hits: &mut Vec<Hit>) {
+fn about(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Vec<Hit>) {
     // the mark: a small pill dock on an accent square
     let (mx, my, ms) = (24.0, 24.0, 56.0);
     g.fill_rr_grad(
@@ -900,14 +900,20 @@ fn about(g: &Gfx, p: &Pal, accent: C, w: f32, h: f32, hits: &mut Vec<Hit>) {
         p.sub,
         Align::Left,
     );
+    if let Some(r) = &d.update {
+        let t = format!("{} is out. Get it", r.version);
+        let tw = g.measure(&t, 12.0, 600);
+        g.text(&t, 94.0, 72.0, tw, 18.0, 12.0, 600, accent, Align::Left);
+        hits.push((94.0, 72.0, tw, 18.0, Act::Do(Action::Update)));
+    }
 
     let lines = [
         "A native dock for Windows 10 and 11.",
         "Rust and Direct2D, no browser engine inside.",
         "",
-        "Weather from Open-Meteo. Claude and Codex",
-        "limits are read from their apps on this PC.",
-        "Nothing else leaves your computer.",
+        "Weather from Open-Meteo, updates from GitHub.",
+        "Claude and Codex limits are read from their",
+        "apps on this PC.",
     ];
     for (i, l) in lines.iter().enumerate() {
         g.text(

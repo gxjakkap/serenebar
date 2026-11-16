@@ -151,6 +151,7 @@ pub enum Action {
     QuickSettings,
     SystemSettings,
     SettingsFolder,
+    Update, // opens the newer release's page
 }
 
 #[derive(Default)]
@@ -165,6 +166,7 @@ pub struct Data {
     pub events: Vec<crate::calendar::Event>,
     pub claude: Option<Vec<Limit>>,
     pub codex: Option<Vec<Limit>>,
+    pub update: Option<crate::update::Release>, // a newer release than this build
     pub volume: Option<crate::controls::Volume>,
     pub wifi: Option<bool>,
     pub vpn: Option<bool>,

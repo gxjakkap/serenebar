@@ -1,4 +1,4 @@
-//! Background fetching: weather, calendar events and AI plan limits.
+//! Background fetching: weather, calendar events, AI plan limits and the update check.
 use crate::calendar::Event;
 use crate::calendar::{fetch_ics, to_local};
 use crate::http::curl;
@@ -7,7 +7,7 @@ use crate::limits::{claude_limits, codex_limits};
 use crate::weather::Weather;
 use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use windows::Win32::Foundation::*;
 
 /// What the feeds last fetched. Read it with `snapshot`.
@@ -17,6 +17,7 @@ pub struct State {
     pub events: Vec<Event>,
     pub claude: Option<Vec<Limit>>,
     pub codex: Option<Vec<Limit>>,
+    pub update: Option<crate::update::Release>,
 }
 
 static STATE: Mutex<State> = Mutex::new(State {
@@ -24,6 +25,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     events: vec![],
     claude: None,
     codex: None,
+    update: None,
 });
 
 pub fn snapshot() -> State {
@@ -48,7 +50,8 @@ pub enum Msg {
     Refetch,
 }
 
-/// Weather and calendar every 15 minutes, Claude limits every 5, Codex limits every minute.
+/// Weather and calendar every 15 minutes, Claude limits every 5, Codex limits every minute,
+/// releases once a day.
 pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
     let h = hwnd.0 as isize;
     let (tx, rx) = channel::<Msg>();
@@ -66,6 +69,7 @@ pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
         };
         let mut place = fixed(&cfg);
         let mut minute = 0u64;
+        let mut next_release_check = Instant::now();
         loop {
             let mut changed = false;
             if minute.is_multiple_of(15) {
@@ -109,6 +113,17 @@ pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
             if minute.is_multiple_of(5) {
                 if let Some(l) = claude_limits() {
                     STATE.lock().unwrap().claude = Some(l);
+                    changed = true;
+                }
+            }
+            // its own clock, since a settings change restarts `minute`
+            if Instant::now() >= next_release_check {
+                let found = crate::update::latest();
+                // a failed check (offline at login, say) tries again in an hour
+                let wait = if found.is_some() { 24 } else { 1 };
+                next_release_check = Instant::now() + Duration::from_secs(wait * 3600);
+                if let Some(r) = found.filter(crate::update::is_update) {
+                    STATE.lock().unwrap().update = Some(r);
                     changed = true;
                 }
             }

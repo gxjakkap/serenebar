@@ -31,6 +31,7 @@ mod taskbar;
 mod tray;
 #[cfg(windows)]
 mod ui;
+mod update;
 mod weather;
 
 #[cfg(windows)]
