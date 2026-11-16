@@ -248,8 +248,16 @@ impl State {
     /// Caret keys and Delete in the focused field. False for any other key.
     pub fn key(&mut self, vk: VIRTUAL_KEY) -> bool {
         let Some(f) = self.focus else { return false };
+        // Backspace and typing reach here before their WM_CHAR, which still needs the Ctrl+A
+        if ![VK_LEFT, VK_RIGHT, VK_HOME, VK_END, VK_DELETE].contains(&vk) {
+            return false;
+        }
+        if std::mem::take(&mut self.select_all) && vk == VK_DELETE {
+            self.text(f).clear();
+            self.caret = 0;
+            return true;
+        }
         let len = self.text(f).chars().count();
-        self.select_all = false;
         match vk {
             VK_LEFT => self.caret = self.caret.saturating_sub(1),
             VK_RIGHT => self.caret = (self.caret + 1).min(len),
