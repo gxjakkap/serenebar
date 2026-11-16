@@ -1,0 +1,45 @@
+# Git hooks, run by prek (https://prek.j178.dev). Set up once per clone with `prek install`.
+default_install_hook_types = ["pre-commit", "commit-msg"]
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "cargo-fmt"
+name = "cargo fmt"
+language = "system"
+entry = "cargo fmt --all -- --check"
+types = ["rust"]
+pass_filenames = false
+
+# Most of the code is #[cfg(windows)], so clippy checks the Windows target even on Linux.
+[[repos.hooks]]
+id = "cargo-clippy"
+name = "cargo clippy"
+language = "system"
+entry = "cargo clippy --target x86_64-pc-windows-gnu --all-targets -- -D warnings"
+files = '(\.rs|Cargo\.(toml|lock))$'
+pass_filenames = false
+
+# Conventional commit header, configured in committed.toml.
+[[repos]]
+repo = "https://github.com/crate-ci/committed"
+rev = "v1.1.12"
+hooks = [{ id = "committed-src" }]
+
+[[repos]]
+repo = "builtin"
+
+# The message is a single header line: no body, no footer.
+[[repos.hooks]]
+id = "deny-pattern"
+name = "commit message has no body"
+args = ["--multiline", '\A[^\n]*\n\s*[^#\s]']
+stages = ["commit-msg"]
+
+# Mentioning AI tools is fine; crediting Claude as an author is not.
+[[repos.hooks]]
+id = "deny-pattern"
+name = "commit message has no Claude attribution"
+args = ["--multiline", "--ignore-case", '\A[^\n]*(co-authored-by:\s*claude|generated (with|by) \[?claude|noreply@anthropic\.com)']
+stages = ["commit-msg"]
