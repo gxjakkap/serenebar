@@ -37,19 +37,58 @@ pub fn pct_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// URL-safe base64 without padding, as PKCE wants.
-pub fn base64url(bytes: &[u8]) -> String {
-    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+fn encode(bytes: &[u8], url: bool) -> String {
     let mut out = String::new();
     for c in bytes.chunks(3) {
         let n = (c[0] as u32) << 16
             | (*c.get(1).unwrap_or(&0) as u32) << 8
             | *c.get(2).unwrap_or(&0) as u32;
         for j in 0..=c.len() {
-            out.push(A[(n >> (18 - 6 * j) & 63) as usize] as char);
+            let ch = B64[(n >> (18 - 6 * j) & 63) as usize];
+            out.push(match (url, ch) {
+                (true, b'+') => '-',
+                (true, b'/') => '_',
+                _ => ch as char,
+            });
+        }
+        if !url {
+            out.push_str(&"=="[..3 - c.len()]);
         }
     }
     out
+}
+
+/// URL-safe base64 without padding, as PKCE wants.
+pub fn base64url(bytes: &[u8]) -> String {
+    encode(bytes, true)
+}
+
+/// Standard base64 with padding.
+pub fn base64(bytes: &[u8]) -> String {
+    encode(bytes, false)
+}
+
+/// Standard base64, padded or not. None for anything else.
+pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    let digits: Vec<u32> = s
+        .trim_end_matches('=')
+        .bytes()
+        .map(|b| B64.iter().position(|&a| a == b).map(|i| i as u32))
+        .collect::<Option<_>>()?;
+    if digits.len() % 4 == 1 {
+        return None;
+    }
+    let mut out = vec![];
+    for c in digits.chunks(4) {
+        let n = c
+            .iter()
+            .enumerate()
+            .fold(0, |n, (j, d)| n | d << (18 - 6 * j));
+        out.extend(n.to_be_bytes()[1..c.len()].iter());
+    }
+    Some(out)
 }
 
 #[cfg(windows)]
@@ -114,6 +153,11 @@ mod tests {
         assert_eq!(base64url(b"fo"), "Zm8");
         assert_eq!(base64url(b"foo"), "Zm9v");
         assert_eq!(base64url(&[0xfb, 0xff]), "-_8");
+        assert_eq!(base64(&[0xfb, 0xff]), "+/8=");
+        for s in ["", "f", "fo", "foo", "foob", "{\"a\":1}"] {
+            assert_eq!(base64_decode(&base64(s.as_bytes())).unwrap(), s.as_bytes());
+        }
+        assert_eq!(base64_decode("Zm9v!"), None);
         assert_eq!(pct("a b/c?d"), "a%20b%2Fc%3Fd");
         assert_eq!(pct("São Paulo"), "S%C3%A3o%20Paulo");
         assert_eq!(pct_decode("4%2F0Ab%20x+y%"), "4/0Ab x y%");

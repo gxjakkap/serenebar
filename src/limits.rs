@@ -61,7 +61,7 @@ pub fn claude_refresh_body(oauth: &Value) -> Option<String> {
     Some(
         serde_json::json!({
             "grant_type": "refresh_token",
-            "refresh_token": oauth["refreshToken"].as_str()?,
+            "refresh_token": oauth["refreshToken"].as_str().filter(|t| !t.is_empty())?,
             "client_id": CLAUDE_CLIENT_ID,
             "scope": scope.join(" "),
         })
@@ -82,6 +82,39 @@ pub fn apply_claude_refresh(creds: &mut Value, body: &str, now_ms: i64) -> Optio
     let expires = now_ms + v["expires_in"].as_i64().unwrap_or(3600) * 1000;
     oauth.insert("expiresAt".into(), expires.into());
     Some(access)
+}
+
+/// Claude Code keeps its sign-in in Windows Credential Manager (through Bun.secrets), and a value
+/// longer than this many bytes is split: base64 in chunks `#0`, `#1`… and `#m` saying `{n, l}`.
+pub const CRED_CHUNK: usize = 2400;
+
+/// `(chunks, base64 length)` from the `#m` entry.
+pub fn cred_chunk_meta(meta: &[u8]) -> Option<(usize, usize)> {
+    let v: Value = serde_json::from_slice(meta).ok()?;
+    Some((v["n"].as_u64()? as usize, v["l"].as_u64()? as usize))
+}
+
+pub fn cred_join(chunks: &[Vec<u8>], len: usize) -> Option<String> {
+    let b64 = String::from_utf8(chunks.concat()).ok()?;
+    if b64.len() != len {
+        return None;
+    }
+    String::from_utf8(crate::http::base64_decode(&b64)?).ok()
+}
+
+/// The `#m` entry and the chunks for a value too long for one entry, None when it fits in one.
+pub fn cred_split(value: &str) -> Option<(String, Vec<String>)> {
+    if value.len() <= CRED_CHUNK {
+        return None;
+    }
+    let b64 = crate::http::base64(value.as_bytes());
+    let chunks: Vec<String> = b64
+        .as_bytes()
+        .chunks(CRED_CHUNK)
+        .map(|c| String::from_utf8_lossy(c).into_owned())
+        .collect();
+    let meta = serde_json::json!({"n": chunks.len(), "l": b64.len()}).to_string();
+    Some((meta, chunks))
 }
 
 fn find<'a>(v: &'a Value, key: &str) -> Option<&'a Value> {
@@ -135,9 +168,186 @@ mod win {
     use crate::dates::unix_now;
     use crate::http::{curl, curl_json};
     use crate::limits::{apply_claude_refresh, claude_refresh_body, Limit, CLAUDE_TOKEN_URL};
+    use serde_json::Value;
+    use std::path::{Path, PathBuf};
 
-    fn home() -> std::path::PathBuf {
+    fn home() -> PathBuf {
         std::env::var("USERPROFILE").unwrap_or_default().into()
+    }
+
+    /// Claude Code's entries in Credential Manager, the way Bun.secrets names them.
+    mod credman {
+        use crate::limits::{cred_chunk_meta, cred_join, cred_split};
+        use windows::core::{HSTRING, PWSTR};
+        use windows::Win32::Security::Credentials::*;
+
+        const ACCOUNT: &str = "claude-code-user";
+
+        fn target(part: &str) -> HSTRING {
+            HSTRING::from(format!("Claude Code-credentials/{ACCOUNT}{part}"))
+        }
+
+        fn read(part: &str) -> Option<Vec<u8>> {
+            let mut c: *mut CREDENTIALW = std::ptr::null_mut();
+            unsafe {
+                CredReadW(&target(part), CRED_TYPE_GENERIC, 0, &mut c).ok()?;
+                let r = &*c;
+                let blob = if r.CredentialBlob.is_null() {
+                    vec![]
+                } else {
+                    std::slice::from_raw_parts(r.CredentialBlob, r.CredentialBlobSize as usize)
+                        .to_vec()
+                };
+                CredFree(c as *const _);
+                Some(blob)
+            }
+        }
+
+        fn write(part: &str, value: &[u8]) -> bool {
+            let mut name: Vec<u16> = format!("Claude Code-credentials/{ACCOUNT}{part}")
+                .encode_utf16()
+                .chain([0])
+                .collect();
+            let mut user: Vec<u16> = format!("{ACCOUNT}{part}")
+                .encode_utf16()
+                .chain([0])
+                .collect();
+            let c = CREDENTIALW {
+                Type: CRED_TYPE_GENERIC,
+                TargetName: PWSTR(name.as_mut_ptr()),
+                UserName: PWSTR(user.as_mut_ptr()),
+                CredentialBlobSize: value.len() as u32,
+                CredentialBlob: value.as_ptr() as *mut u8,
+                Persist: CRED_PERSIST_ENTERPRISE, // Bun.secrets' default
+                ..Default::default()
+            };
+            unsafe { CredWriteW(&c, 0).is_ok() }
+        }
+
+        fn delete(part: &str) {
+            let _ = unsafe { CredDeleteW(&target(part), CRED_TYPE_GENERIC, 0) };
+        }
+
+        fn meta() -> Option<(usize, usize)> {
+            read("#m").and_then(|m| cred_chunk_meta(&m))
+        }
+
+        pub fn load() -> Option<String> {
+            match meta() {
+                Some((n, len)) => {
+                    let chunks: Option<Vec<_>> = (0..n).map(|i| read(&format!("#{i}"))).collect();
+                    cred_join(&chunks?, len)
+                }
+                None => String::from_utf8(read("")?).ok(),
+            }
+        }
+
+        /// Saves in the order Claude Code does, with `#p` marking a change in progress.
+        pub fn save(value: &str) -> bool {
+            let old = meta().map_or(0, |(n, _)| n);
+            match cred_split(value) {
+                None => {
+                    if !write("", value.as_bytes()) {
+                        return false;
+                    }
+                    if old > 0 {
+                        write("#p", old.to_string().as_bytes());
+                        delete("#m");
+                        (0..old).for_each(|i| delete(&format!("#{i}")));
+                        delete("#p");
+                    }
+                }
+                Some((m, chunks)) => {
+                    write("#p", chunks.len().max(old).to_string().as_bytes());
+                    let all = chunks
+                        .iter()
+                        .enumerate()
+                        .all(|(i, c)| write(&format!("#{i}"), c.as_bytes()));
+                    if !all || !write("#m", m.as_bytes()) {
+                        return false;
+                    }
+                    delete("");
+                    (chunks.len()..old).for_each(|i| delete(&format!("#{i}")));
+                    delete("#p");
+                }
+            }
+            true
+        }
+    }
+
+    /// Claude Code's lock for writing its sign-in: a folder, stale after 15 s untouched.
+    struct Lock(PathBuf);
+
+    impl Lock {
+        fn take(dir: &Path) -> Option<Lock> {
+            let p = dir.join(".storage-write.lock");
+            if std::fs::create_dir(&p).is_err() {
+                let age = std::fs::metadata(&p)
+                    .ok()?
+                    .modified()
+                    .ok()?
+                    .elapsed()
+                    .ok()?;
+                if age.as_secs() < 15 {
+                    return None; // Claude Code is writing; try again next round
+                }
+                std::fs::remove_dir(&p).ok()?;
+                std::fs::create_dir(&p).ok()?;
+            }
+            Some(Lock(p))
+        }
+    }
+
+    impl Drop for Lock {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir(&self.0);
+        }
+    }
+
+    /// Where Claude Code's sign-in is: Credential Manager, else the plaintext file.
+    enum Store {
+        Credman,
+        File(PathBuf),
+    }
+
+    impl Store {
+        fn load(dir: &Path) -> Option<(Store, Value)> {
+            // with either variable set, the entry's name ends in a hash of the folder
+            // ponytail: only the default entry is read; the file still works for the others
+            let default_dir = std::env::var_os("CLAUDE_CONFIG_DIR").is_none()
+                && std::env::var_os("CLAUDE_SECURESTORAGE_CONFIG_DIR").is_none();
+            if let Some(v) = default_dir.then(credman::load).flatten() {
+                return Some((Store::Credman, serde_json::from_str(&v).ok()?));
+            }
+            let path = dir.join(".credentials.json");
+            let v = serde_json::from_str(&std::fs::read_to_string(&path).ok()?).ok()?;
+            Some((Store::File(path), v))
+        }
+
+        fn save(&self, creds: &Value) -> Option<()> {
+            let text = serde_json::to_string(creds).ok()?;
+            match self {
+                Store::Credman => credman::save(&text).then_some(()),
+                Store::File(path) => {
+                    // write then rename, so Claude Code never reads half a file
+                    let tmp = path.with_extension("json.tmp");
+                    std::fs::write(&tmp, text).ok()?;
+                    std::fs::rename(&tmp, path).ok()
+                }
+            }
+        }
+    }
+
+    /// The access token, or None when it runs out within a minute.
+    fn fresh_token(creds: &Value) -> Option<String> {
+        let o = &creds["claudeAiOauth"];
+        let live = o["expiresAt"]
+            .as_i64()
+            .is_some_and(|ms| ms / 1000 > unix_now() + 60);
+        o["accessToken"]
+            .as_str()
+            .filter(|t| live && !t.is_empty())
+            .map(String::from)
     }
 
     /// Uses the sign-in Claude Code already keeps on this PC, refreshing it when it has expired
@@ -146,24 +356,24 @@ mod win {
         let dir = std::env::var("CLAUDE_CONFIG_DIR")
             .map(Into::into)
             .unwrap_or_else(|_| home().join(".claude"));
-        let path = dir.join(".credentials.json");
-        let mut creds: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).ok()?).ok()?;
-        let oauth = &creds["claudeAiOauth"];
-        // a minute early, so it can't run out between here and the request
-        let token = if oauth["expiresAt"]
-            .as_i64()
-            .is_some_and(|ms| ms / 1000 < unix_now() + 60)
-        {
-            let body = curl_json(CLAUDE_TOKEN_URL, &claude_refresh_body(oauth)?)?;
-            let token = apply_claude_refresh(&mut creds, &body, unix_now() * 1000)?;
-            // write then rename, so Claude Code never reads half a file
-            let tmp = path.with_extension("json.tmp");
-            std::fs::write(&tmp, serde_json::to_string(&creds).ok()?).ok()?;
-            std::fs::rename(&tmp, &path).ok()?;
-            token
-        } else {
-            oauth["accessToken"].as_str()?.to_string()
+        let (_, creds) = Store::load(&dir)?;
+        let token = match fresh_token(&creds) {
+            Some(t) => t,
+            None => {
+                let _lock = Lock::take(&dir)?;
+                // Claude Code may have refreshed it while we waited
+                let (store, mut creds) = Store::load(&dir)?;
+                match fresh_token(&creds) {
+                    Some(t) => t,
+                    None => {
+                        let body = claude_refresh_body(&creds["claudeAiOauth"])?;
+                        let body = curl_json(CLAUDE_TOKEN_URL, &body)?;
+                        let t = apply_claude_refresh(&mut creds, &body, unix_now() * 1000)?;
+                        store.save(&creds)?;
+                        t
+                    }
+                }
+            }
         };
         let headers =
             format!("Authorization: Bearer {token}\r\nanthropic-beta: oauth-2025-04-20\r\n");
@@ -247,6 +457,25 @@ mod tests {
             (Some("pro"), Some(1))
         );
         assert_eq!(apply_claude_refresh(&mut creds, "{}", 0), None);
+        // the plaintext file Claude Code leaves when the tokens are in Credential Manager
+        assert_eq!(
+            claude_refresh_body(&serde_json::json!({"refreshToken": ""})),
+            None
+        );
+    }
+
+    #[test]
+    fn credential_manager_chunks() {
+        let small = r#"{"claudeAiOauth":{}}"#;
+        assert_eq!(cred_split(small), None);
+        let big = format!(r#"{{"mcpOAuth":"{}"}}"#, "é".repeat(3000));
+        let (meta, chunks) = cred_split(&big).unwrap();
+        assert!(chunks.len() == 4 && chunks.iter().all(|c| c.len() <= CRED_CHUNK));
+        let (n, len) = cred_chunk_meta(meta.as_bytes()).unwrap();
+        let bytes: Vec<Vec<u8>> = chunks.into_iter().map(String::into_bytes).collect();
+        assert_eq!(n, bytes.len());
+        assert_eq!(cred_join(&bytes, len).as_deref(), Some(big.as_str()));
+        assert_eq!(cred_join(&bytes[..3], len), None);
     }
 
     #[test]
