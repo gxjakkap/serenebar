@@ -98,12 +98,17 @@ pub use win::*;
 mod win {
     /// `headers` go to curl on stdin (`-H @-`), which keeps tokens out of the process list.
     pub fn curl(url: &str, headers: Option<&str>) -> Option<String> {
-        run_curl(url, headers.map(|h| (&["-H", "@-"][..], h)))
+        run_curl("-fsS", url, headers.map(|h| (&["-H", "@-"][..], h)))
+    }
+
+    /// Like `curl`, but an HTTP error's body comes back too, for APIs that say what went wrong.
+    pub fn curl_any(url: &str, headers: Option<&str>) -> Option<String> {
+        run_curl("-sS", url, headers.map(|h| (&["-H", "@-"][..], h)))
     }
 
     /// POSTs a form, sent on stdin for the same reason.
     pub fn curl_form(url: &str, form: &str) -> Option<String> {
-        run_curl(url, Some((&["--data-binary", "@-"], form)))
+        run_curl("-fsS", url, Some((&["--data-binary", "@-"], form)))
     }
 
     /// POSTs a JSON body, sent on stdin like a form.
@@ -114,15 +119,15 @@ mod win {
             "--data-binary",
             "@-",
         ];
-        run_curl(url, Some((&args, json)))
+        run_curl("-fsS", url, Some((&args, json)))
     }
 
-    fn run_curl(url: &str, stdin: Option<(&[&str], &str)>) -> Option<String> {
+    fn run_curl(fail: &str, url: &str, stdin: Option<(&[&str], &str)>) -> Option<String> {
         use std::io::Write;
         use std::os::windows::process::CommandExt;
         use std::process::{Command, Stdio};
         let mut cmd = Command::new("curl.exe");
-        cmd.args(["-fsS", "--max-time", "15"])
+        cmd.args([fail, "--max-time", "15"])
             .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

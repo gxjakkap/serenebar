@@ -95,6 +95,7 @@ pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
                     .then(|| fetch_ics(&cfg.calendar, from, to))
                     .flatten();
                 let google = crate::google::events(&cfg.google_id, &cfg.google_secret, from, to);
+                changed |= google.is_none() && !cfg.google_id.is_empty(); // so Settings shows why
                 if ics.is_some() || google.is_some() {
                     let mut ev: Vec<Event> = ics
                         .into_iter()

@@ -53,6 +53,28 @@ pub fn parse_calendar_ids(body: &str) -> Vec<String> {
         .collect()
 }
 
+/// What to tell the user when the Calendar API answers with an error instead of data.
+pub fn api_error(body: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let e = v.get("error")?;
+    let text = e.to_string();
+    Some(
+        if text.contains("SERVICE_DISABLED") || text.contains("accessNotConfigured") {
+            "Google Calendar API is off. Enable it in your Cloud project, then wait a minute."
+                .into()
+        } else if text.contains("ACCESS_TOKEN_SCOPE_INSUFFICIENT")
+            || text.contains("insufficientPermissions")
+        {
+            "Calendar access wasn't allowed. Sign out, sign in and tick the calendar box.".into()
+        } else {
+            format!(
+                "Google Calendar: {}",
+                e["message"].as_str().unwrap_or("request failed")
+            )
+        },
+    )
+}
+
 /// Events from Google's events.list. Timed events come back as UTC stamps, all-day ones as dates.
 pub fn parse_google_events(body: &str) -> Vec<Event> {
     let Ok(v) = serde_json::from_str::<Value>(body) else {
@@ -103,7 +125,7 @@ pub use win::*;
 #[cfg(windows)]
 mod win {
     use super::*;
-    use crate::http::{base64url, curl, curl_form};
+    use crate::http::{base64url, curl_any, curl_form};
     use crate::settings::Settings;
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
@@ -322,10 +344,19 @@ mod win {
         let token = access_token(id, secret)?;
         let auth = format!("Authorization: Bearer {token}\r\n");
         let api = "https://www.googleapis.com/calendar/v3";
-        let list = curl(
-            &format!("{api}/users/me/calendarList?minAccessRole=reader"),
-            Some(&auth),
-        )?;
+        // curl_any so Google's reason for an error reaches Settings instead of vanishing
+        let get = |url: &str| {
+            let Some(body) = curl_any(url, Some(&auth)) else {
+                set_status("Can't reach Google Calendar.");
+                return None;
+            };
+            if let Some(msg) = api_error(&body) {
+                set_status(&msg);
+                return None;
+            }
+            Some(body)
+        };
+        let list = get(&format!("{api}/users/me/calendarList?minAccessRole=reader"))?;
         let mut ids = parse_calendar_ids(&list);
         if ids.is_empty() {
             ids.push("primary".into());
@@ -337,10 +368,11 @@ mod win {
         let mut out = vec![];
         for cal in ids {
             let url = format!("{api}/calendars/{}/events?timeMin={min}&timeMax={max}&singleEvents=true&orderBy=startTime&maxResults=250", pct(&cal));
-            if let Some(body) = curl(&url, Some(&auth)) {
+            if let Some(body) = get(&url) {
                 out.extend(parse_google_events(&body));
             }
         }
+        set_status(""); // the account works, so any old error is stale
         Some(out)
     }
 }
@@ -396,5 +428,18 @@ mod tests {
             ("Standup", "Zoom")
         );
         assert_eq!((e[1].at.sec, e[1].summary.as_str()), (None, "(No title)"));
+    }
+
+    #[test]
+    fn api_errors() {
+        let off = r#"{"error":{"code":403,"message":"Google Calendar API has not been used in project 1","errors":[{"reason":"accessNotConfigured"}],"status":"PERMISSION_DENIED"}}"#;
+        assert!(api_error(off).unwrap().contains("API is off"));
+        let scope = r#"{"error":{"code":403,"message":"Request had insufficient authentication scopes.","details":[{"reason":"ACCESS_TOKEN_SCOPE_INSUFFICIENT"}]}}"#;
+        assert!(api_error(scope).unwrap().contains("tick the calendar box"));
+        assert_eq!(
+            api_error(r#"{"error":{"message":"x"}}"#).as_deref(),
+            Some("Google Calendar: x")
+        );
+        assert_eq!(api_error(r#"{"items":[]}"#), None);
     }
 }
