@@ -59,15 +59,26 @@ pub use win::*;
 mod win {
     /// `headers` go to curl on stdin (`-H @-`), which keeps tokens out of the process list.
     pub fn curl(url: &str, headers: Option<&str>) -> Option<String> {
-        run_curl(url, headers.map(|h| (["-H", "@-"], h)))
+        run_curl(url, headers.map(|h| (&["-H", "@-"][..], h)))
     }
 
     /// POSTs a form, sent on stdin for the same reason.
     pub fn curl_form(url: &str, form: &str) -> Option<String> {
-        run_curl(url, Some((["--data-binary", "@-"], form)))
+        run_curl(url, Some((&["--data-binary", "@-"], form)))
     }
 
-    fn run_curl(url: &str, stdin: Option<([&str; 2], &str)>) -> Option<String> {
+    /// POSTs a JSON body, sent on stdin like a form.
+    pub fn curl_json(url: &str, json: &str) -> Option<String> {
+        let args = [
+            "-H",
+            "Content-Type: application/json",
+            "--data-binary",
+            "@-",
+        ];
+        run_curl(url, Some((&args, json)))
+    }
+
+    fn run_curl(url: &str, stdin: Option<(&[&str], &str)>) -> Option<String> {
         use std::io::Write;
         use std::os::windows::process::CommandExt;
         use std::process::{Command, Stdio};
