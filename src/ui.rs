@@ -37,7 +37,7 @@ pub fn theme(s: Style) -> Theme {
     };
     let light = |bar: Option<C>, text: u32, sub: u32| Theme {
         text: rgba(text, 1.0),
-        sub: rgba(sub, 0.62),
+        sub: rgba(sub, 0.78), // 4.7:1 or better on the light bars
         tile: b(0.035),
         tile_hover: b(0.07),
         tile_border: b(0.07),
@@ -242,7 +242,7 @@ pub fn pal(dark: bool) -> Pal {
             bg: rgba(0xF2F2F7, 0.98),
             card: rgba(0xFFFFFF, 1.0),
             text: rgba(0x1D1D1F, 1.0),
-            sub: rgba(0x3C3C43, 0.6),
+            sub: rgba(0x3C3C43, 0.78), // 5.3:1 on bg, 5.6:1 on card
             border: rgba(0x000000, 0.08),
         }
     }
