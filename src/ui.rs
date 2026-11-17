@@ -123,6 +123,34 @@ pub fn head(m: &Metrics) -> f32 {
     (MAG - 1.0) * m.icon + 6.0 * m.k
 }
 
+/// Room beyond the magnified icons for the name over the hovered one. DIPs at scale 1.
+pub const TIP_ROOM: f32 = 16.0;
+
+/// What the name over a hovered control says, for the controls that are only a glyph.
+/// App names come from the shell, so the caller looks those up.
+pub fn tip(act: Action, d: &Data) -> Option<String> {
+    let radio = |name: &str| match d.radio(act) {
+        Some(true) => format!("{name} on"),
+        Some(false) => format!("{name} off"),
+        None => name.to_string(),
+    };
+    let playing = d.media.as_ref().is_some_and(|m| m.playing);
+    Some(match act {
+        Action::Start => "Start".into(),
+        Action::Open(Panel::Tray) => "Hidden icons".into(),
+        Action::ShowDesktop => "Show desktop".into(),
+        Action::Wifi => radio("Wi-Fi"),
+        Action::Bluetooth => radio("Bluetooth"),
+        Action::Vpn => radio("VPN"),
+        Action::Prev => "Previous".into(),
+        Action::Toggle if playing => "Pause".into(),
+        Action::Toggle => "Play".into(),
+        Action::Next => "Next".into(),
+        Action::TaskManager => "Task Manager".into(),
+        _ => return None,
+    })
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Panel {
     Weather,
@@ -194,6 +222,7 @@ pub struct View<'a> {
     pub lifted: Option<usize>, // app being dragged, drawn above the rest
     pub bar_x: f32, // where the bar sits inside the window. The magnification room is beside it.
     pub bar_y: f32,
+    pub tip: Option<String>, // the name shown over the hovered control
 }
 
 pub fn accent(s: &Settings) -> C {
@@ -250,8 +279,24 @@ pub struct Pal {
     pub border: C,
 }
 
+/// The faint fill under a control the cursor is over.
+pub fn wash(p: &Pal) -> C {
+    C { a: 0.08, ..p.text }
+}
+
 /// The ✕ in a card's top right corner.
-pub fn close_button<A>(g: &Gfx, p: &Pal, cx: f32, cy: f32, act: A, hits: &mut Vec<Hit<A>>) {
+pub fn close_button<A>(
+    g: &Gfx,
+    p: &Pal,
+    cx: f32,
+    cy: f32,
+    act: A,
+    hovered: bool,
+    hits: &mut Vec<Hit<A>>,
+) {
+    if hovered {
+        g.fill_circle(cx, cy, 15.0, wash(p));
+    }
     g.line(cx - 6.0, cy - 6.0, cx + 6.0, cy + 6.0, p.sub, 1.8);
     g.line(cx + 6.0, cy - 6.0, cx - 6.0, cy + 6.0, p.sub, 1.8);
     hits.push((cx - 16.0, cy - 16.0, 32.0, 32.0, act));
@@ -531,8 +576,32 @@ pub fn draw_tiles(g: &Gfx, v: &View, d: &Data, full_w: Option<f32>) -> Vec<Hit<A
             }
         }
     }
+    g.set_transform(about(1.0, 0.0, 0.0, v));
+    draw_tip(g, v, &hits, full_w.unwrap_or_else(|| content_width(d, v)));
     g.set_transform(Matrix3x2::identity());
     hits
+}
+
+/// The name over the hovered control, on the side away from the screen edge, kept over the bar.
+fn draw_tip(g: &Gfx, v: &View, hits: &[Hit<Action>], bar_w: f32) {
+    let (Some(text), Some(act)) = (&v.tip, v.hover) else {
+        return;
+    };
+    let Some(&(hx, hy, hw, hh, _)) = hits.iter().find(|h| h.4 == act) else {
+        return;
+    };
+    let (k, p) = (v.m.k, pal(v.th.dark));
+    let f = font(k, 12.0);
+    let (tw, th) = (g.measure(text, f, 600) + 20.0 * k, 24.0 * k);
+    let tx = (hx + hw / 2.0 - tw / 2.0).clamp(0.0, (bar_w - tw).max(0.0));
+    let ty = if v.s.top {
+        hy + hh + 6.0 * k
+    } else {
+        hy - 6.0 * k - th
+    };
+    g.fill_rr(tx, ty, tw, th, th / 2.0, p.bg);
+    g.stroke_rr(tx, ty, tw, th, th / 2.0, p.border, 1.0);
+    g.text(text, tx, ty, tw, th, f, 600, p.text, Align::Center);
 }
 
 fn tile(g: &Gfx, v: &View, x: f32, y: f32, w: f32, h: f32, hovered: bool) {

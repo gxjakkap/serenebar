@@ -73,6 +73,7 @@ pub struct State {
     select_all: bool, // Ctrl+A: the next edit replaces the whole field
     drag: Option<RowDrag>,
     pub places: Vec<crate::weather::Place>, // suggestions under the city field
+    pub over: Option<Act>,                  // the control under the cursor
 }
 
 /// A widget row held by its grip. `moved` turns a press into a drag after a few pixels.
@@ -171,6 +172,7 @@ impl State {
             select_all: false,
             drag: None,
             places: vec![],
+            over: None,
         }
     }
 
@@ -351,10 +353,18 @@ struct Ctx<'a> {
     p: Pal,
     accent: C,
     link: C, // the accent as text
+    over: Option<Act>,
     hits: &'a mut Vec<Hit>,
 }
 
 impl Ctx<'_> {
+    /// The wash under the control the cursor is over.
+    fn hover(&self, g: &Gfx, act: Act, x: f32, y: f32, w: f32, h: f32, r: f32) {
+        if self.over == Some(act) {
+            g.fill_rr(x, y, w, h, r, ui::wash(&self.p));
+        }
+    }
+
     fn title(&self, g: &Gfx, s: &str, x: f32, y: f32) {
         g.text(s, x, y, 300.0, 22.0, 15.0, 700, self.p.text, Align::Left);
     }
@@ -371,6 +381,8 @@ impl Ctx<'_> {
             let sx = x + i as f32 * sw;
             if on {
                 g.fill_rr(sx + 2.0, y + 2.0, sw - 4.0, 26.0, 7.0, self.accent);
+            } else {
+                self.hover(g, act, sx + 2.0, y + 2.0, sw - 4.0, 26.0, 7.0);
             }
             // bold keeps white on the accent above 3:1
             let (fg, weight) = if on {
@@ -392,6 +404,7 @@ impl Ctx<'_> {
             12.0,
             if on { self.accent } else { self.p.card },
         );
+        self.hover(g, act, x, y, 40.0, 24.0, 12.0);
         g.stroke_rr(x, y, 40.0, 24.0, 12.0, self.p.border, 1.0);
         // the knob's rim keeps it visible on the light accents and the white card
         let kx = if on { x + 28.0 } else { x + 12.0 };
@@ -409,7 +422,13 @@ impl Ctx<'_> {
             w,
             32.0,
             9.0,
-            if focused { self.accent } else { self.p.border },
+            if focused {
+                self.accent
+            } else if self.over == Some(Act::Focus(f)) {
+                self.p.sub
+            } else {
+                self.p.border
+            },
             if focused { 2.0 } else { 1.0 },
         );
         let raw = &st.fields[f as usize];
@@ -476,6 +495,7 @@ pub fn draw(g: &Gfx, st: &State, s: &Settings, flags: Flags, w: f32, h: f32) -> 
         p: pal(dark),
         accent,
         link: ui::accent_text(s, dark),
+        over: st.over,
         hits: &mut hits,
     };
     g.fill_rr(0.0, 0.0, w, h, 20.0, c.p.bg);
@@ -500,6 +520,8 @@ pub fn draw(g: &Gfx, st: &State, s: &Settings, flags: Flags, w: f32, h: f32) -> 
         let on = st.tab == tab;
         if on {
             g.fill_rr(x, y, tw, 32.0, 9.0, accent);
+        } else {
+            c.hover(g, Act::Tab(tab), x, y, tw, 32.0, 9.0);
         }
         let (fg, weight) = if on {
             (ui::on_fill(accent), 700)
@@ -527,6 +549,9 @@ pub fn draw(g: &Gfx, st: &State, s: &Settings, flags: Flags, w: f32, h: f32) -> 
         (None, note) => (note.into(), c.p.sub, Some(Act::CheckUpdate)), // click to check again
     };
     let y = h - 118.0;
+    if let Some(act) = act {
+        c.hover(g, act, 16.0, y, SIDEBAR - 32.0, 30.0, 8.0);
+    }
     g.text(
         &t,
         24.0,
@@ -549,6 +574,7 @@ pub fn draw(g: &Gfx, st: &State, s: &Settings, flags: Flags, w: f32, h: f32) -> 
     .enumerate()
     {
         let y = h - 84.0 + i as f32 * 34.0;
+        c.hover(g, act, 16.0, y, SIDEBAR - 32.0, 30.0, 8.0);
         g.text(
             name,
             24.0,
@@ -562,7 +588,8 @@ pub fn draw(g: &Gfx, st: &State, s: &Settings, flags: Flags, w: f32, h: f32) -> 
         );
         c.hits.push((16.0, y, SIDEBAR - 32.0, 30.0, act));
     }
-    ui::close_button(g, &c.p, w - 34.0, 36.0, Act::Close, c.hits);
+    let over_close = c.over == Some(Act::Close);
+    ui::close_button(g, &c.p, w - 34.0, 36.0, Act::Close, over_close, c.hits);
 
     let (x, cw) = (SIDEBAR + 28.0, w - SIDEBAR - 56.0);
     match st.tab {
@@ -584,6 +611,7 @@ fn appearance(g: &Gfx, c: &mut Ctx, s: &Settings, x0: f32, cw: f32) {
         );
         let on = s.style == *style;
         g.fill_rr(x, y, chip, 30.0, 9.0, c.p.card);
+        c.hover(g, Act::Style(*style), x, y, chip, 30.0, 9.0);
         if on {
             g.stroke_rr(x, y, chip, 30.0, 9.0, c.accent, 2.0);
         }
@@ -630,6 +658,8 @@ fn appearance(g: &Gfx, c: &mut Ctx, s: &Settings, x0: f32, cw: f32) {
         let (dx, dy) = (x0 + 11.0 + i as f32 * 34.0, y + 44.0);
         if s.accent == i {
             g.arc(dx, dy, 13.0, 1.0, c.p.text, 2.0);
+        } else if c.over == Some(Act::Accent(i)) {
+            g.fill_circle(dx, dy, 14.0, ui::wash(&c.p));
         }
         g.fill_circle(dx, dy, 10.0, rgba(*hex, 1.0));
         c.hits
@@ -726,6 +756,7 @@ fn widgets(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, x0: f32, cw: f32) {
         if st.drag.is_none() && st.rows.iter().any(|r| !r.on) {
             let (bx, by) = (x0 + w3 - 26.0, gy - 1.0);
             g.fill_rr(bx, by, 20.0, 20.0, 6.0, c.p.card);
+            c.hover(g, Act::Add(gi), bx, by, 20.0, 20.0, 6.0);
             g.fill_rr(bx + 5.0, by + 9.25, 10.0, 1.5, 0.75, c.p.text);
             g.fill_rr(bx + 9.25, by + 5.0, 1.5, 10.0, 0.75, c.p.text);
             c.hits.push((bx - 4.0, by - 2.0, 28.0, 24.0, Act::Add(gi)));
@@ -789,6 +820,7 @@ fn widgets(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, x0: f32, cw: f32) {
             10.0,
             if on { c.accent } else { c.p.card },
         );
+        c.hover(g, Act::Control(control), x, y, chip_w, 50.0, 10.0);
         ui::control_glyph(g, control, x + chip_w / 2.0, y + 18.0, 10.0, fg);
         g.text(
             control.label(),
@@ -860,6 +892,7 @@ fn feeds(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, flags: &Flags, x0: f32,
         };
         g.text(&line, x0, 288.0, cw, 18.0, 11.0, 500, c.p.text, Align::Left);
         g.fill_rr(x0, 318.0, 110.0, 32.0, 9.0, c.p.card);
+        c.hover(g, Act::GoogleSignOut, x0, 318.0, 110.0, 32.0, 9.0);
         g.text(
             "Sign out",
             x0,
@@ -893,6 +926,7 @@ fn feeds(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, flags: &Flags, x0: f32,
             9.0,
             if ready { c.accent } else { c.p.card },
         );
+        c.hover(g, Act::GoogleSignIn, x0, 330.0, 160.0, 32.0, 9.0);
         let (fg, weight) = if ready {
             (ui::on_fill(c.accent), 700)
         } else {
@@ -919,6 +953,15 @@ fn feeds(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, flags: &Flags, x0: f32,
         g.text(note, x0, 370.0, cw, 18.0, 10.5, 400, c.p.sub, Align::Left);
         let link = "How to make one";
         let lw = g.measure(link, 10.5, 600);
+        c.hover(
+            g,
+            Act::GoogleGuide,
+            x0 + nw - 4.0,
+            368.0,
+            lw + 8.0,
+            22.0,
+            6.0,
+        );
         g.text(
             link,
             x0 + nw,
@@ -946,6 +989,7 @@ fn feeds(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, flags: &Flags, x0: f32,
         let mut picks = vec![];
         for (i, p) in st.places.iter().enumerate() {
             let y = y0 + 4.0 + i as f32 * SUGGESTION;
+            c.hover(g, Act::Pick(i), x + 4.0, y, cw - 8.0, SUGGESTION, 7.0);
             let nw = g.measure(&p.name, 12.0, 600).min(cw - 24.0);
             g.text(
                 &p.name,
@@ -976,8 +1020,14 @@ fn feeds(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, flags: &Flags, x0: f32,
 }
 
 fn row(g: &Gfx, c: &mut Ctx, st: &State, i: usize, r: &WidgetRow, x: f32, y: f32, w: f32) {
+    if st.drag.is_none() {
+        c.hover(g, Act::Drag(i), x + 24.0, y + 1.0, w - 24.0, ROW - 2.0, 8.0);
+    }
     // remove: a minus in a circle
     g.fill_circle(x + 10.0, y + ROW / 2.0, 9.0, c.p.card);
+    if st.drag.is_none() && c.over == Some(Act::Remove(i)) {
+        g.fill_circle(x + 10.0, y + ROW / 2.0, 9.0, ui::wash(&c.p));
+    }
     g.fill_rr(x + 5.5, y + ROW / 2.0 - 0.75, 9.0, 1.5, 0.75, c.p.sub);
     if st.drag.is_none() {
         c.hits.push((x - 2.0, y, 26.0, ROW, Act::Remove(i)));

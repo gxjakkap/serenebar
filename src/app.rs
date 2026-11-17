@@ -45,6 +45,19 @@ fn xy(lp: LPARAM) -> (i32, i32) {
     )
 }
 
+/// Asks for a WM_MOUSELEAVE when the cursor leaves `hwnd`.
+fn track_leave(hwnd: HWND) {
+    let mut t = TRACKMOUSEEVENT {
+        cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+        dwFlags: TME_LEAVE,
+        hwndTrack: hwnd,
+        dwHoverTime: 0,
+    };
+    unsafe {
+        let _ = TrackMouseEvent(&mut t);
+    }
+}
+
 fn cursor() -> POINT {
     let mut p = POINT::default();
     unsafe {
@@ -210,7 +223,8 @@ struct Bar {
     inside: bool, // the cursor is over the window and a WM_MOUSELEAVE is on its way
     mag: Vec<f32>,
     mag_target: Vec<f32>,
-    base_left: f32, // screen x where unmagnified content starts
+    base_left: f32,                    // screen x where unmagnified content starts
+    app_tip: Option<(String, String)>, // key and shell name of the last app hovered
 }
 
 impl Drop for Bar {
@@ -247,6 +261,7 @@ impl Bar {
             mag: vec![],
             mag_target: vec![],
             base_left: 0.0,
+            app_tip: None,
         })
     }
 
@@ -311,12 +326,38 @@ impl Bar {
             lifted: self.app_drag,
             bar_x: self.bar_x,
             bar_y: self.bar_y,
+            tip: None,
         }
     }
 
     fn full_width(&self, s: &Settings) -> Option<f32> {
         let m = self.monitor();
         s.full.then(|| (m.right - m.left) as f32 / self.k())
+    }
+
+    /// The name to show over the hovered control. None while anything is being dragged.
+    fn tip(&self, d: &ui::Data) -> Option<String> {
+        if self.drag.is_some() || self.app_drag.is_some() {
+            return None;
+        }
+        match self.hover? {
+            Action::App(i) => {
+                let (key, name) = self.app_tip.as_ref()?;
+                (d.apps.get(i)?.key() == key).then(|| name.clone())
+            }
+            act => ui::tip(act, d),
+        }
+    }
+
+    /// Looks up the shell name of the app under the cursor, once per app.
+    fn name_hovered_app(&mut self, d: &ui::Data) {
+        let Some(Action::App(i)) = self.hover else {
+            return;
+        };
+        let Some(item) = d.apps.get(i) else { return };
+        if self.app_tip.as_ref().is_none_or(|t| t.0 != item.key()) {
+            self.app_tip = Some((item.key().to_string(), apps::app_name(item)));
+        }
     }
 
     fn magnified(&self) -> bool {
@@ -334,7 +375,7 @@ impl Bar {
         (
             (m.h * k).ceil() as i32,
             gap,
-            (ui::head(&m) * k).ceil() as i32,
+            ((ui::head(&m) + ui::TIP_ROOM * m.k) * k).ceil() as i32,
         )
     }
 
@@ -407,13 +448,17 @@ impl Bar {
         );
 
         // Grow the clickable region before drawing, shrink it after, so it never cuts into a frame on screen.
-        let open = self.magnified() && self.drag.is_none();
+        let tip = self.tip(d);
+        let open = (self.magnified() || tip.is_some()) && self.drag.is_none();
         if open {
             self.set_region(true);
         }
         let glass = crate::glass::params(s.style)
             .is_some_and(|p| self.g.prepare_glass(self.bar, m.bar_radius(s.full), p));
-        let view = self.view(s, started, &mag);
+        let view = ui::View {
+            tip,
+            ..self.view(s, started, &mag)
+        };
         self.g.begin();
         ui::draw_bar(&self.g, &view, bar_w as f32 / k, glass);
         let hits = ui::draw_tiles(&self.g, &view, d, self.full_width(s));
@@ -1035,12 +1080,18 @@ impl App {
             self.panel_volume(lp);
             return;
         }
-        let hover = match self.panel_hit(lp) {
-            Some((panel::Act::TrayIcon(i), _)) => Some(i),
+        let over = self.panel_hit(lp).map(|h| h.0);
+        let hover = match over {
+            Some(panel::Act::TrayIcon(i)) => Some(i),
             _ => None,
         };
-        if let Some(p) = self.panel.as_mut().filter(|p| p.st.hover != hover) {
-            p.st.hover = hover;
+        if let Some(p) = self
+            .panel
+            .as_mut()
+            .filter(|p| (p.st.hover, p.st.over) != (hover, over))
+        {
+            track_leave(p.hwnd);
+            (p.st.hover, p.st.over) = (hover, over);
             self.draw_panel();
         }
     }
@@ -1184,8 +1235,25 @@ impl App {
     }
 
     fn prefs_move(&mut self, lp: LPARAM) {
+        let over = self.prefs_hit(lp);
         let Some(p) = &mut self.prefs else { return };
-        if p.st.drag_to(xy(lp).1 as f32 / p.g.k) {
+        let moved = p.st.drag_to(xy(lp).1 as f32 / p.g.k);
+        let over = if p.st.dragging() { None } else { over };
+        if moved || p.st.over != over {
+            track_leave(p.hwnd);
+            p.st.over = over;
+            self.draw_prefs();
+        }
+    }
+
+    /// The cursor left a panel or the settings window: nothing is under it any more.
+    fn leave_popup(&mut self) {
+        if let Some(p) = self.panel.as_mut().filter(|p| p.st.over.is_some()) {
+            (p.st.hover, p.st.over) = (None, None);
+            self.draw_panel();
+        }
+        if let Some(p) = self.prefs.as_mut().filter(|p| p.st.over.is_some()) {
+            p.st.over = None;
             self.draw_prefs();
         }
     }
@@ -1614,13 +1682,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         WM_MOUSEMOVE => with_bar(hwnd, |a, i| unsafe {
             let b = &mut a.bars[i];
             if !b.inside {
-                let mut t = TRACKMOUSEEVENT {
-                    cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
-                    dwFlags: TME_LEAVE,
-                    hwndTrack: hwnd,
-                    dwHoverTime: 0,
-                };
-                let _ = TrackMouseEvent(&mut t);
+                track_leave(hwnd);
                 b.inside = true;
             }
             if let Some((icon, x0)) = b.app_press {
@@ -1649,6 +1711,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 let h = b.hit_at(xy(lp)).map(|h| h.0);
                 if h != b.hover {
                     b.hover = h;
+                    b.name_hovered_app(&a.d);
                     a.draw(i);
                 }
                 a.update_targets(i);
@@ -1743,6 +1806,7 @@ extern "system" fn panel_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> L
         WM_KEYDOWN if wp.0 == VK_ESCAPE.0 as usize => with_app(|a| a.close_panel()),
         WM_LBUTTONDOWN => with_app(|a| a.panel_press(lp)),
         WM_MOUSEMOVE => with_app(|a| a.panel_move(lp)),
+        WM_MOUSELEAVE => with_app(|a| a.leave_popup()),
         WM_LBUTTONUP => with_app(|a| a.panel_click(lp)),
         WM_RBUTTONUP => with_app(|a| {
             if let Some((panel::Act::TrayIcon(i), _)) = a.panel_hit(lp) {
@@ -1780,6 +1844,7 @@ extern "system" fn prefs_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> L
     let handled = match msg {
         WM_LBUTTONDOWN => with_app(|a| a.prefs_press(lp)),
         WM_MOUSEMOVE => with_app(|a| a.prefs_move(lp)),
+        WM_MOUSELEAVE => with_app(|a| a.leave_popup()),
         WM_LBUTTONUP => with_app(|a| a.prefs_click(lp)),
         WM_CHAR => with_app(|a| a.prefs_char(wp.0 as u32)),
         WM_KEYDOWN => with_app(|a| a.prefs_key(wp.0 as u16)),
