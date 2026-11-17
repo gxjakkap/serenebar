@@ -122,6 +122,22 @@ mod win {
         run_curl("-fsS", url, Some((&args, json)))
     }
 
+    /// Saves `url` to `path`, following redirects (GitHub's asset links redirect).
+    pub fn download(url: &str, path: &std::path::Path) -> bool {
+        use std::os::windows::process::CommandExt;
+        use std::process::{Command, Stdio};
+        Command::new("curl.exe")
+            .args(["-fsSL", "--max-time", "300", "-o"])
+            .arg(path)
+            .arg(url)
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
     fn run_curl(fail: &str, url: &str, stdin: Option<(&[&str], &str)>) -> Option<String> {
         use std::io::Write;
         use std::os::windows::process::CommandExt;

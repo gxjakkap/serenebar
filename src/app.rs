@@ -3,7 +3,7 @@ use crate::controls::{self, Cmd};
 use crate::feeds::{self, FeedConfig};
 use crate::settings::{widgets_from_rows, Settings, Size, Style, Widget};
 use crate::ui::{self, Action, Panel};
-use crate::{dock, gfx, google, panel, prefs, system, taskbar, tray, weather};
+use crate::{dock, gfx, google, panel, prefs, system, taskbar, tray, update, weather};
 use std::cell::RefCell;
 use std::sync::mpsc::Sender;
 use std::time::Instant;
@@ -590,6 +590,8 @@ struct App {
     at: usize,      // the bar the user last pointed at. Panels and Settings open from it.
     panel: Option<PanelWin>,
     prefs: Option<PrefsWin>,
+    installer: Option<std::path::PathBuf>, // a newer release's setup, downloaded and checked
+    installing: bool,                      // it's been started; setup closes this app
 }
 
 thread_local! {
@@ -745,7 +747,8 @@ impl App {
         let f = feeds::snapshot();
         (self.d.weather, self.d.events, self.d.claude, self.d.codex) =
             (f.weather, f.events, f.claude, f.codex);
-        (self.d.update, self.d.update_note) = (f.update, f.update_note);
+        (self.d.update, self.d.update_note, self.installer) =
+            (f.update, f.update_note, f.installer);
         self.d.weather_w = self.d.weather.as_ref().map_or(0.0, |wx| {
             let g = &self.bars[0].g;
             let label = weather::wmo(wx.code, wx.day).0;
@@ -772,9 +775,18 @@ impl App {
 
     fn update(&mut self) {
         self.refresh();
+        if self.s.auto_update && self.installer.is_some() && !self.installing && update::away() {
+            self.install();
+        }
         self.draw_all();
         self.draw_panel();
         self.draw_prefs();
+    }
+
+    fn install(&mut self) {
+        if let Some(p) = self.installer.as_ref().filter(|_| !self.installing) {
+            self.installing = update::install(p, system::startup_enabled());
+        }
     }
 
     fn draw(&mut self, i: usize) {
@@ -863,11 +875,12 @@ impl App {
                 }
             }
             Action::TaskManager => system::open("taskmgr.exe"),
-            Action::Update => {
-                if let Some(r) = &self.d.update {
-                    system::open(&r.url)
-                }
-            }
+            // the release page when its installer couldn't be fetched or checked
+            Action::Update => match (&self.installer, &self.d.update) {
+                (Some(_), _) => self.install(),
+                (None, Some(r)) => system::open(&r.url),
+                (None, None) => {}
+            },
             Action::App(i) => {
                 if let Some(item) = self.d.apps.get(i) {
                     apps::activate(item)
@@ -1296,6 +1309,7 @@ impl App {
             ),
             Act::GoogleSignOut => google::sign_out(self.after_google()),
             Act::Update => self.act(Action::Update, 0.0),
+            Act::AutoUpdate => self.change(|s| s.auto_update = !s.auto_update),
             Act::CheckUpdate => {
                 let _ = self.feeds.send(feeds::Msg::CheckUpdate);
             }
@@ -1844,6 +1858,8 @@ pub fn main() -> Result<()> {
             panel: None,
             capturable: false,
             prefs: None,
+            installer: None,
+            installing: false,
             s,
         };
         APP.with(|a| *a.borrow_mut() = Some(app));
