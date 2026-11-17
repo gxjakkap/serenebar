@@ -703,7 +703,7 @@ fn dock(g: &Gfx, c: &mut Ctx, s: &Settings, flags: &Flags, x0: f32, cw: f32) {
         Act::Screenshots,
     );
     g.text(
-        "Freezes the glass while on",
+        "Lets screenshots and recordings show the dock. The glass stops updating while it's on.",
         x0,
         406.0,
         cw,

@@ -596,7 +596,7 @@ fn media(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut
     let (line, playing) = match &d.media {
         Some(m) if !m.artist.is_empty() => (format!("{} · {}", m.title, m.artist), m.playing),
         Some(m) => (m.title.clone(), m.playing),
-        None => ("Not playing".to_string(), false),
+        None => ("Nothing playing".to_string(), false),
     };
     g.text(
         &line,
@@ -662,7 +662,7 @@ fn weather(
         let msg = if has_city {
             "Loading weather…"
         } else {
-            "Set a city for weather"
+            "Add a city in Settings"
         };
         g.text(
             msg,
