@@ -91,6 +91,20 @@ pub fn parse_badge(title: &str) -> u32 {
         .unwrap_or(0)
 }
 
+/// True when everything drawn in a square 32-bit BGRA image of width `w` fits in a quarter
+/// of it. The shell returns this when an exe has no 256 px icon: a 32 or 48 px icon centred
+/// on an empty 256 px canvas.
+pub fn mostly_padding(bgra: &[u8], w: usize) -> bool {
+    let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0, 0);
+    for (i, px) in bgra.as_chunks::<4>().0.iter().enumerate() {
+        if px[3] != 0 {
+            let (x, y) = (i % w, i / w);
+            (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+        }
+    }
+    x0 == usize::MAX || (x1 - x0 + 1).max(y1 - y0 + 1) * 4 <= w
+}
+
 #[cfg(windows)]
 pub use win::*;
 
@@ -103,7 +117,7 @@ mod win {
 
     use windows::Win32::Foundation::*;
     use windows::Win32::Graphics::Dwm::*;
-    use windows::Win32::Graphics::Gdi::HBITMAP;
+    use windows::Win32::Graphics::Gdi::{DeleteObject, GetObjectW, BITMAP, HBITMAP};
     use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
     use windows::Win32::System::Com::*;
 
@@ -385,16 +399,40 @@ mod win {
         // Icons come in fixed sizes (16, 32, 48, 256). At any other size the shell resizes with
         // no smoothing, which leaves jagged edges, so take the 256 one and let Direct2D's cubic
         // filter shrink it when drawing.
-        let px = px.max(256) as i32;
+        // An exe with no 256 one comes back as its small icon on an empty 256 canvas, so ask
+        // again at the tile size.
         names.iter().find_map(|n| unsafe {
             let f: IShellItemImageFactory =
                 SHCreateItemFromParsingName(&HSTRING::from(n), None).ok()?;
-            f.GetImage(
-                SIZE { cx: px, cy: px },
-                SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK,
-            )
-            .ok()
+            let get = |s: u32| {
+                let s = s as i32;
+                f.GetImage(SIZE { cx: s, cy: s }, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK)
+                    .ok()
+            };
+            let h = get(px.max(256))?;
+            if px < 256 && padded(h) {
+                let _ = DeleteObject(h);
+                return get(px);
+            }
+            Some(h)
         })
+    }
+
+    unsafe fn padded(h: HBITMAP) -> bool {
+        let mut bm = BITMAP::default();
+        let ok = GetObjectW(
+            h,
+            std::mem::size_of::<BITMAP>() as i32,
+            Some(&mut bm as *mut _ as *mut _),
+        ) != 0;
+        if !ok || bm.bmBits.is_null() || bm.bmBitsPixel != 32 {
+            return false;
+        }
+        let bits = std::slice::from_raw_parts(
+            bm.bmBits as *const u8,
+            (bm.bmWidthBytes * bm.bmHeight) as usize,
+        );
+        crate::apps::mostly_padding(bits, bm.bmWidth as usize)
     }
 
     /// Behaves like a taskbar click. It launches the app, focuses its window, cycles
@@ -486,5 +524,22 @@ mod tests {
         assert_eq!(parse_badge("Notepad (Not Responding)"), 0);
         assert_eq!(parse_badge("Visual Studio Code"), 0);
         assert_eq!(parse_badge("(99+) Slack"), 99);
+    }
+
+    #[test]
+    fn small_icon_on_a_big_canvas() {
+        let canvas = |side: usize| {
+            let mut b = vec![0u8; 256 * 256 * 4];
+            let o = (256 - side) / 2;
+            for y in o..o + side {
+                for x in o..o + side {
+                    b[(y * 256 + x) * 4 + 3] = 255;
+                }
+            }
+            b
+        };
+        assert!(mostly_padding(&canvas(48), 256));
+        assert!(!mostly_padding(&canvas(200), 256));
+        assert!(mostly_padding(&vec![0u8; 256 * 256 * 4], 256));
     }
 }
