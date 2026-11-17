@@ -3,7 +3,9 @@ use crate::dates::LocalTime;
 use crate::dock::MAG;
 use crate::gfx::{rgba, Align, Gfx, C};
 use crate::limits::{Limit, Window};
-use crate::settings::{Control, Settings, Size, Slot, Style, Widget, ACCENTS, GROUPS};
+use crate::settings::{
+    dark_text_on, Control, Settings, Size, Slot, Style, Widget, ACCENTS, GROUPS,
+};
 use crate::tray::TrayIcon;
 use crate::weather::Weather;
 use std::f32::consts::PI;
@@ -195,6 +197,13 @@ pub struct View<'a> {
 
 pub fn accent(s: &Settings) -> C {
     rgba(ACCENTS[s.accent].0, 1.0)
+}
+
+/// Text and glyphs on a fill of `c`: white, or near-black on the light accents.
+pub fn on_fill(c: C) -> C {
+    let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+    let dark = dark_text_on(b(c.r) << 16 | b(c.g) << 8 | b(c.b));
+    rgba(if dark { 0x1D1D1F } else { 0xFFFFFF }, 1.0)
 }
 
 /// Smallest text on the bar, whatever the size setting.
@@ -1250,7 +1259,7 @@ fn controls(
                 }
                 g.fill_circle(cx, cy, br, bg);
                 let fg = dim(
-                    if lit { white(1.0) } else { v.th.text },
+                    if lit { on_fill(v.accent) } else { v.th.text },
                     if on.is_some() { 1.0 } else { 0.35 },
                 );
                 radio_glyph(g, act, cx, cy, 9.0 * k, fg);
@@ -1319,7 +1328,7 @@ fn controls(
                         s,
                         font(k, 12.0),
                         700,
-                        white(1.0),
+                        on_fill(bg),
                         Align::Center,
                     );
                 }

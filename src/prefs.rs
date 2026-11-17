@@ -371,17 +371,13 @@ impl Ctx<'_> {
             if on {
                 g.fill_rr(sx + 2.0, y + 2.0, sw - 4.0, 26.0, 7.0, self.accent);
             }
-            g.text(
-                name,
-                sx,
-                y,
-                sw,
-                30.0,
-                11.5,
-                600,
-                if on { rgba(0xFFFFFF, 1.0) } else { self.p.text },
-                Align::Center,
-            );
+            // bold keeps white on the accent above 3:1
+            let (fg, weight) = if on {
+                (ui::on_fill(self.accent), 700)
+            } else {
+                (self.p.text, 600)
+            };
+            g.text(name, sx, y, sw, 30.0, 11.5, weight, fg, Align::Center);
             self.hits.push((sx, y, sw, 30.0, act));
         }
     }
@@ -396,12 +392,10 @@ impl Ctx<'_> {
             if on { self.accent } else { self.p.card },
         );
         g.stroke_rr(x, y, 40.0, 24.0, 12.0, self.p.border, 1.0);
-        g.fill_circle(
-            if on { x + 28.0 } else { x + 12.0 },
-            y + 12.0,
-            9.0,
-            rgba(0xFFFFFF, 1.0),
-        );
+        // the knob's rim keeps it visible on the light accents and the white card
+        let kx = if on { x + 28.0 } else { x + 12.0 };
+        g.fill_circle(kx, y + 12.0, 9.0, rgba(0xFFFFFF, 1.0));
+        g.arc(kx, y + 12.0, 9.0, 1.0, rgba(0x000000, 0.18), 1.0);
         self.hits.push((x - 4.0, y - 4.0, 48.0, 32.0, act));
     }
 
@@ -505,6 +499,11 @@ pub fn draw(g: &Gfx, st: &State, s: &Settings, flags: Flags, w: f32, h: f32) -> 
         if on {
             g.fill_rr(x, y, tw, 32.0, 9.0, accent);
         }
+        let (fg, weight) = if on {
+            (ui::on_fill(accent), 700)
+        } else {
+            (c.p.text, 600)
+        };
         g.text(
             tab.title(),
             x + 12.0,
@@ -512,8 +511,8 @@ pub fn draw(g: &Gfx, st: &State, s: &Settings, flags: Flags, w: f32, h: f32) -> 
             tw - 12.0,
             32.0,
             12.5,
-            600,
-            if on { rgba(0xFFFFFF, 1.0) } else { c.p.text },
+            weight,
+            fg,
             Align::Left,
         );
         c.hits.push((x, y, tw, 32.0, Act::Tab(tab)));
@@ -779,7 +778,7 @@ fn widgets(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, x0: f32, cw: f32) {
             104.0 + (i / 3) as f32 * 58.0,
         );
         let on = s.controls.contains(&control);
-        let fg = if on { rgba(0xFFFFFF, 1.0) } else { c.p.text };
+        let fg = if on { ui::on_fill(c.accent) } else { c.p.text };
         g.fill_rr(
             x,
             y,
@@ -796,7 +795,7 @@ fn widgets(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, x0: f32, cw: f32) {
             chip_w,
             16.0,
             10.5,
-            600,
+            if on { 700 } else { 600 },
             fg,
             Align::Center,
         );
@@ -892,6 +891,11 @@ fn feeds(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, flags: &Flags, x0: f32,
             9.0,
             if ready { c.accent } else { c.p.card },
         );
+        let (fg, weight) = if ready {
+            (ui::on_fill(c.accent), 700)
+        } else {
+            (c.p.sub, 600)
+        };
         g.text(
             "Sign in with Google",
             x0,
@@ -899,8 +903,8 @@ fn feeds(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, flags: &Flags, x0: f32,
             160.0,
             32.0,
             12.0,
-            600,
-            if ready { rgba(0xFFFFFF, 1.0) } else { c.p.sub },
+            weight,
+            fg,
             Align::Center,
         );
         if ready {

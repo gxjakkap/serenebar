@@ -115,6 +115,25 @@ pub const ACCENTS: [(u32, &str); 9] = [
     (0x8E8E93, "Graphite"),
 ];
 
+/// Relative luminance of an sRGB colour, as WCAG defines it.
+pub fn luminance(hex: u32) -> f32 {
+    let lin = |c: u32| {
+        let c = (c & 255) as f32 / 255.0;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * lin(hex >> 16) + 0.7152 * lin(hex >> 8) + 0.0722 * lin(hex)
+}
+
+/// Whether text and glyphs on a fill of `hex` should be near-black instead of white.
+/// White falls below 3:1 on Orange, Yellow, Green and Teal.
+pub fn dark_text_on(hex: u32) -> bool {
+    luminance(hex) > 0.3
+}
+
 /// Tiles the dock can show.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Widget {
@@ -498,6 +517,26 @@ pub fn widgets_from_rows(rows: &[WidgetRow]) -> Vec<Slot> {
 mod tests {
     use super::*;
     use Widget::*;
+
+    fn contrast(a: u32, b: u32) -> f32 {
+        let (la, lb) = (luminance(a), luminance(b));
+        (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+    }
+
+    #[test]
+    fn text_on_accents_is_readable() {
+        for &(fill, name) in ACCENTS.iter() {
+            // labels on a fill are bold, so 3:1 is enough
+            let fg = if dark_text_on(fill) {
+                0x1D1D1F
+            } else {
+                0xFFFFFF
+            };
+            assert!(contrast(fg, fill) >= 3.0, "text on {name}");
+        }
+        assert!(dark_text_on(0x30D158)); // the charging battery chip
+        assert!(!dark_text_on(0x0A84FF));
+    }
 
     fn parse_test(txt: &str) -> Settings {
         Settings::parse(txt, Vec::new)

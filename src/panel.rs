@@ -7,8 +7,8 @@ use crate::gfx::{rgba, Align, Gfx, C};
 use crate::limits::Limit;
 use crate::settings::Settings;
 use crate::ui::{
-    ai_logo, close_button, limit_color, media_glyph, pal, radio_glyph, speaker_glyph, Action, Data,
-    Pal, Panel,
+    ai_logo, close_button, limit_color, media_glyph, on_fill, pal, radio_glyph, speaker_glyph,
+    Action, Data, Pal, Panel,
 };
 
 pub struct State {
@@ -728,7 +728,7 @@ fn controls(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Ve
         g.fill_rr(bx, y, bw, 72.0, 14.0, if lit { accent } else { p.card });
         let fg = C {
             a: if on.is_some() { 1.0 } else { 0.35 },
-            ..if lit { white } else { p.text }
+            ..if lit { on_fill(accent) } else { p.text }
         };
         let (cx, cy) = (bx + bw / 2.0, y + 28.0);
         if act == Action::Mute {
@@ -736,7 +736,18 @@ fn controls(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Ve
         } else {
             radio_glyph(g, act, cx, cy, 13.0, fg)
         }
-        g.text(label, bx, y + 46.0, bw, 18.0, 11.0, 600, fg, Align::Center);
+        let weight = if lit { 700 } else { 600 }; // bold keeps white on the accent above 3:1
+        g.text(
+            label,
+            bx,
+            y + 46.0,
+            bw,
+            18.0,
+            11.0,
+            weight,
+            fg,
+            Align::Center,
+        );
         hits.push((bx, y, bw, 72.0, Act::Do(act)));
     }
 
