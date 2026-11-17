@@ -650,7 +650,7 @@ fn weather(
         return;
     };
     let (top, bottom) = if wx.day {
-        (0x5AA9F0, 0x2F72D6)
+        (0x1375CE, 0x245FB7) // white is 4.7:1 on the lighter top
     } else {
         (0x2B3A67, 0x141B33)
     };
@@ -688,7 +688,7 @@ fn weather(
         13.0 * k,
         9.0 * k,
         500,
-        white(0.8),
+        white(1.0),
         Align::Left,
     );
     g.text(
