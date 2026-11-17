@@ -115,6 +115,24 @@ pub const ACCENTS: [(u32, &str); 9] = [
     (0x8E8E93, "Graphite"),
 ];
 
+/// Each accent as text, (on light surfaces, on dark surfaces), in the order of `ACCENTS`.
+/// The fills above are too light to read as text on white, and some too dark on the dark cards.
+/// Every one of these is at least 4.5:1 on the panel and card colours of its appearance.
+pub const ACCENT_TEXT: [(u32, u32); 9] = [
+    (0x0040DD, 0x409CFF),
+    (0x8944AB, 0xDA8FFF),
+    (0xD30F45, 0xFF6482),
+    (0xD70015, 0xFF6961),
+    (0xC93400, 0xFF9F0A),
+    (0xA05A00, 0xFFD60A),
+    (0x1E7D34, 0x30D158),
+    (0x0071A4, 0x64D2FF),
+    (0x6C6C70, 0xAEAEB2),
+];
+
+/// Red text for actions like Quit, (light, dark).
+pub const DANGER_TEXT: (u32, u32) = ACCENT_TEXT[3];
+
 /// Relative luminance of an sRGB colour, as WCAG defines it.
 pub fn luminance(hex: u32) -> f32 {
     let lin = |c: u32| {
@@ -524,8 +542,10 @@ mod tests {
     }
 
     #[test]
-    fn text_on_accents_is_readable() {
-        for &(fill, name) in ACCENTS.iter() {
+    fn accent_colours_are_readable() {
+        // pal() in ui.rs: panel background and card, light then dark
+        let (light, dark) = ([0xF2F2F7, 0xFFFFFF], [0x1C1C1E, 0x2C2C2E]);
+        for (i, &(fill, name)) in ACCENTS.iter().enumerate() {
             // labels on a fill are bold, so 3:1 is enough
             let fg = if dark_text_on(fill) {
                 0x1D1D1F
@@ -533,6 +553,13 @@ mod tests {
                 0xFFFFFF
             };
             assert!(contrast(fg, fill) >= 3.0, "text on {name}");
+            let (l, d) = ACCENT_TEXT[i];
+            for bg in light {
+                assert!(contrast(l, bg) >= 4.5, "{name} text on {bg:06X}");
+            }
+            for bg in dark {
+                assert!(contrast(d, bg) >= 4.5, "{name} text on {bg:06X}");
+            }
         }
         assert!(dark_text_on(0x30D158)); // the charging battery chip
         assert!(!dark_text_on(0x0A84FF));

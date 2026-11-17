@@ -350,6 +350,7 @@ pub const HEADER: f32 = 64.0; // drag the window by this strip
 struct Ctx<'a> {
     p: Pal,
     accent: C,
+    link: C, // the accent as text
     hits: &'a mut Vec<Hit>,
 }
 
@@ -474,6 +475,7 @@ pub fn draw(g: &Gfx, st: &State, s: &Settings, flags: Flags, w: f32, h: f32) -> 
     let mut c = Ctx {
         p: pal(dark),
         accent,
+        link: ui::accent_text(s, dark),
         hits: &mut hits,
     };
     g.fill_rr(0.0, 0.0, w, h, 20.0, c.p.bg);
@@ -519,7 +521,7 @@ pub fn draw(g: &Gfx, st: &State, s: &Settings, flags: Flags, w: f32, h: f32) -> 
     }
     // a newer release, else the check button or how the last check went
     let (t, col, act) = match (&flags.update, flags.update_note) {
-        (Some(v), _) => (format!("Update to {v}"), c.accent, Some(Act::Update)),
+        (Some(v), _) => (format!("Update to {v}"), c.link, Some(Act::Update)),
         (None, "") => ("Check for updates".into(), c.p.sub, Some(Act::CheckUpdate)),
         (None, "Checking…") => ("Checking…".into(), c.p.sub, None),
         (None, note) => (note.into(), c.p.sub, Some(Act::CheckUpdate)), // click to check again
@@ -541,7 +543,7 @@ pub fn draw(g: &Gfx, st: &State, s: &Settings, flags: Flags, w: f32, h: f32) -> 
     }
     for (i, (name, act, col)) in [
         ("About serenebar", Act::About, c.p.sub),
-        ("Quit serenebar", Act::Quit, rgba(0xFF453A, 1.0)),
+        ("Quit serenebar", Act::Quit, ui::danger_text(dark)),
     ]
     .into_iter()
     .enumerate()
@@ -925,7 +927,7 @@ fn feeds(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, flags: &Flags, x0: f32,
             18.0,
             10.5,
             600,
-            c.accent,
+            c.link,
             Align::Left,
         );
         c.hits.push((x0 + nw, 370.0, lw, 18.0, Act::GoogleGuide));

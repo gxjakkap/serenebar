@@ -7,8 +7,8 @@ use crate::gfx::{rgba, Align, Gfx, C};
 use crate::limits::Limit;
 use crate::settings::Settings;
 use crate::ui::{
-    ai_logo, close_button, limit_color, media_glyph, on_fill, pal, radio_glyph, speaker_glyph,
-    Action, Data, Pal, Panel,
+    accent_text, ai_logo, close_button, limit_color, media_glyph, on_fill, pal, radio_glyph,
+    speaker_glyph, Action, Data, Pal, Panel,
 };
 
 pub struct State {
@@ -115,17 +115,19 @@ pub fn size(kind: Panel, d: &Data) -> (f32, f32) {
 }
 
 pub fn draw(g: &Gfx, st: &State, d: &Data, s: &Settings, w: f32, h: f32) -> Vec<Hit> {
-    let (p, accent) = (pal(crate::ui::theme(s.style).dark), crate::ui::accent(s));
+    let dark = crate::ui::theme(s.style).dark;
+    let (p, accent) = (pal(dark), crate::ui::accent(s));
+    let link = accent_text(s, dark); // the accent as text
     g.fill_rr(0.0, 0.0, w, h, 22.0, p.bg);
     g.stroke_rr(0.0, 0.0, w, h, 22.0, p.border, 1.0);
     let mut hits = vec![];
     close_button(g, &p, w - 30.0, 32.0, Act::Close, &mut hits);
     match st.kind {
-        Panel::Calendar => calendar(g, &p, st, d, accent, s.clock24, w, h, &mut hits),
+        Panel::Calendar => calendar(g, &p, st, d, accent, link, s.clock24, w, h, &mut hits),
         Panel::Weather => weather(g, &p, d, w),
         Panel::Claude | Panel::Codex => ai(g, &p, st.kind, d, w, h),
-        Panel::Controls => controls(g, &p, d, accent, w, h, &mut hits),
-        Panel::About => about(g, &p, d, accent, w, h, &mut hits),
+        Panel::Controls => controls(g, &p, d, accent, link, w, h, &mut hits),
+        Panel::About => about(g, &p, d, accent, link, w, h, &mut hits),
         Panel::Tray => tray(g, &p, st, d, w, h, &mut hits),
     }
     hits
@@ -137,6 +139,7 @@ fn calendar(
     st: &State,
     d: &Data,
     accent: C,
+    link: C,
     h24: bool,
     w: f32,
     h: f32,
@@ -165,7 +168,7 @@ fn calendar(
         32.0,
         14.0,
         600,
-        accent,
+        link,
         Align::Center,
     );
     hits.push((w - 196.0, 16.0, 60.0, 32.0, Act::Today));
@@ -221,7 +224,7 @@ fn calendar(
             g.stroke_rr(x, cy, cw, ch, 14.0, p.sub, 1.5);
         }
         let color = if day == today {
-            accent
+            link
         } else if day < today {
             p.sub
         } else {
@@ -652,7 +655,7 @@ fn ai(g: &Gfx, p: &Pal, kind: Panel, d: &Data, w: f32, h: f32) {
 
 /// Our own quick settings: what's playing, Wi-Fi, Bluetooth, mute, volume and battery,
 /// with a link to Windows' panel for the rest.
-fn controls(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Vec<Hit>) {
+fn controls(g: &Gfx, p: &Pal, d: &Data, accent: C, link: C, w: f32, h: f32, hits: &mut Vec<Hit>) {
     let white = rgba(0xFFFFFF, 1.0);
     let (x, cw) = (16.0, w - 32.0);
     g.text(
@@ -831,7 +834,7 @@ fn controls(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Ve
         28.0,
         12.0,
         600,
-        accent,
+        link,
         Align::Left,
     );
     hits.push((16.0, fy + 4.0, 190.0, 32.0, Act::Do(Action::QuickSettings)));
@@ -855,7 +858,7 @@ fn controls(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Ve
     ));
 }
 
-fn about(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Vec<Hit>) {
+fn about(g: &Gfx, p: &Pal, d: &Data, accent: C, link: C, w: f32, h: f32, hits: &mut Vec<Hit>) {
     // the mark: a small pill dock on an accent square
     let (mx, my, ms) = (24.0, 24.0, 56.0);
     g.fill_rr_grad(
@@ -914,7 +917,7 @@ fn about(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Vec<H
     if let Some(r) = &d.update {
         let t = format!("{} is out. Get it", r.version);
         let tw = g.measure(&t, 12.0, 600);
-        g.text(&t, 94.0, 72.0, tw, 18.0, 12.0, 600, accent, Align::Left);
+        g.text(&t, 94.0, 72.0, tw, 18.0, 12.0, 600, link, Align::Left);
         hits.push((94.0, 72.0, tw, 18.0, Act::Do(Action::Update)));
     }
 
@@ -948,7 +951,7 @@ fn about(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Vec<H
         40.0,
         12.5,
         600,
-        accent,
+        link,
         Align::Center,
     );
     hits.push((

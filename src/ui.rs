@@ -4,7 +4,8 @@ use crate::dock::MAG;
 use crate::gfx::{rgba, Align, Gfx, C};
 use crate::limits::{Limit, Window};
 use crate::settings::{
-    dark_text_on, Control, Settings, Size, Slot, Style, Widget, ACCENTS, GROUPS,
+    dark_text_on, Control, Settings, Size, Slot, Style, Widget, ACCENTS, ACCENT_TEXT, DANGER_TEXT,
+    GROUPS,
 };
 use crate::tray::TrayIcon;
 use crate::weather::Weather;
@@ -197,6 +198,17 @@ pub struct View<'a> {
 
 pub fn accent(s: &Settings) -> C {
     rgba(ACCENTS[s.accent].0, 1.0)
+}
+
+/// The accent as text on the panels and the settings window.
+pub fn accent_text(s: &Settings, dark: bool) -> C {
+    let (l, d) = ACCENT_TEXT[s.accent];
+    rgba(if dark { d } else { l }, 1.0)
+}
+
+/// Red text for actions like Quit.
+pub fn danger_text(dark: bool) -> C {
+    rgba(if dark { DANGER_TEXT.1 } else { DANGER_TEXT.0 }, 1.0)
 }
 
 /// Text and glyphs on a fill of `c`: white, or near-black on the light accents.
