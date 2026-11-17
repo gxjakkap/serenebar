@@ -746,6 +746,13 @@ impl App {
         (self.d.weather, self.d.events, self.d.claude, self.d.codex) =
             (f.weather, f.events, f.claude, f.codex);
         (self.d.update, self.d.update_note) = (f.update, f.update_note);
+        self.d.weather_w = self.d.weather.as_ref().map_or(0.0, |wx| {
+            let g = &self.bars[0].g;
+            let label = weather::wmo(wx.code, wx.day).0;
+            g.measure(label, 10.5, 600)
+                .max(g.measure(&wx.city, 9.0, 500))
+                + g.measure(&format!("{:.0}°", wx.temp), 21.0, 300)
+        });
         let c = controls::snapshot();
         let id = c.media.as_ref().map_or(0, |m| m.art_id);
         if id != self.art_id {

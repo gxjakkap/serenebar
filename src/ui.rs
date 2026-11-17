@@ -163,6 +163,7 @@ pub struct Data {
     pub media: Option<crate::controls::Media>,
     pub art_tint: Option<C>,
     pub weather: Option<Weather>,
+    pub weather_w: f32, // label/city column plus temperature, measured at scale 1
     pub events: Vec<crate::calendar::Event>,
     pub claude: Option<Vec<Limit>>,
     pub codex: Option<Vec<Limit>>,
@@ -254,7 +255,7 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
         Widget::Start => icons_w(v, 0..1),
         Widget::Apps if !d.apps.is_empty() => icons_w(v, 1..d.apps.len() + 1),
         Widget::Media => 196.0 * k,
-        Widget::Weather => 150.0 * k,
+        Widget::Weather => (WEATHER_PAD + d.weather_w).max(150.0) * k,
         Widget::Clock => 100.0 * k,
         Widget::DateClock => 52.0 * k,
         Widget::Claude if d.claude.is_some() => 196.0 * k,
@@ -606,6 +607,9 @@ fn deepen(c: C) -> C {
     }
 }
 
+/// The weather tile's fixed room: 10 left margin, 8 between columns, 4 before the 32 icon slot.
+const WEATHER_PAD: f32 = 54.0;
+
 fn weather(
     g: &Gfx,
     v: &View,
@@ -661,11 +665,15 @@ fn weather(
     );
     g.stroke_rr(x, y, w, h, r, white(0.14), 1.0);
     let (label, icon) = crate::weather::wmo(wx.code, wx.day);
+    let temp = format!("{:.0}°", wx.temp);
+    let tw = g.measure(&temp, 21.0 * k, 300);
+    let tx = x + w - 36.0 * k - tw;
+    let lw = tx - 8.0 * k - (x + 10.0 * k);
     g.text(
         label,
         x + 10.0 * k,
         y + 7.0 * k,
-        w * 0.56,
+        lw,
         15.0 * k,
         10.5 * k,
         600,
@@ -676,7 +684,7 @@ fn weather(
         &wx.city,
         x + 10.0 * k,
         y + 22.0 * k,
-        w * 0.56,
+        lw,
         13.0 * k,
         9.0 * k,
         500,
@@ -684,10 +692,10 @@ fn weather(
         Align::Left,
     );
     g.text(
-        &format!("{:.0}°", wx.temp),
-        x + w * 0.5,
+        &temp,
+        tx,
         y,
-        w * 0.5 - 26.0 * k,
+        tw + 1.0,
         h,
         21.0 * k,
         300,
