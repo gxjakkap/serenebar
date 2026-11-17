@@ -749,9 +749,12 @@ impl App {
         self.d.weather_w = self.d.weather.as_ref().map_or(0.0, |wx| {
             let g = &self.bars[0].g;
             let label = weather::wmo(wx.code, wx.day).0;
-            g.measure(label, 10.5, 600)
-                .max(g.measure(&wx.city, 9.0, 500))
-                + g.measure(&format!("{:.0}°", wx.temp), 21.0, 300)
+            // at the sizes the tile draws them, then back to scale 1
+            let k = ui::metrics(self.s.size).k;
+            let text = g.measure(label, ui::font(k, 11.0), 600);
+            let city = g.measure(&wx.city, ui::font(k, 10.0), 500);
+            let temp = g.measure(&format!("{:.0}°", wx.temp), ui::font(k, 21.0), 300);
+            (text.max(city) + temp) / k
         });
         let c = controls::snapshot();
         let id = c.media.as_ref().map_or(0, |m| m.art_id);
