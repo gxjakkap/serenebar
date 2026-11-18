@@ -151,6 +151,8 @@ pub fn tip(act: Action, d: &Data) -> Option<String> {
         Action::Mic => "Mute microphone".into(),
         Action::Mute if d.volume.as_ref().is_some_and(|v| v.muted) => "Sound muted".into(),
         Action::Mute => "Mute sound".into(),
+        Action::Theme if d.light == Some(false) => "Light mode".into(),
+        Action::Theme => "Dark mode".into(),
         _ => return None,
     })
 }
@@ -180,6 +182,7 @@ pub enum Action {
     Vpn,
     Mute, // the speakers: deafen
     Mic,
+    Theme,
     Volume,
     Settings,
     Language,
@@ -208,6 +211,7 @@ pub struct Data {
     pub volume: Option<crate::controls::Volume>,
     pub mic: Option<bool>,       // muted; None without a microphone
     pub net: Option<(f64, f64)>, // bytes per second down and up
+    pub light: Option<bool>,     // Windows apps are in light mode
     pub wifi: Option<bool>,
     pub vpn: Option<bool>,
     pub lang: Option<(String, String)>,
@@ -349,7 +353,7 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
             (w + 8.0) * k
         }
         Widget::Lang if d.lang.is_some() => 46.0 * k,
-        Widget::Tray | Widget::Desktop => 24.0 * k,
+        Widget::Tray | Widget::Desktop | Widget::Theme => 24.0 * k,
         Widget::System => 96.0 * k,
         Widget::Mic => 68.0 * k,
         Widget::Network => 92.0 * k,
@@ -585,6 +589,7 @@ pub fn draw_tiles(g: &Gfx, v: &View, d: &Data, full_w: Option<f32>) -> Vec<Hit<A
                 Widget::Battery => battery(g, v, d, x, y, w, h),
                 Widget::Mic => mic(g, v, d, x, y, w, h, &mut hits),
                 Widget::Network => network(g, v, d, x, y, w, h, &mut hits),
+                Widget::Theme => theme_toggle(g, v, x, y, w, h, &mut hits),
             }
         }
     }
@@ -1768,4 +1773,20 @@ fn network(
         );
     }
     hits.push((x, y, w, h, Action::TaskManager));
+}
+
+/// A circle, half filled: switches Windows between light and dark mode.
+fn theme_toggle(g: &Gfx, v: &View, x: f32, y: f32, w: f32, h: f32, hits: &mut Vec<Hit<Action>>) {
+    let k = v.m.k;
+    hover_backing(g, v, Action::Theme, x, y, w, h);
+    let (cx, cy, r) = (x + w / 2.0, y + h / 2.0, 6.5 * k);
+    g.arc(cx, cy, r, 1.0, v.th.text, 1.4 * k);
+    let half: Vec<(f32, f32)> = (0..=16)
+        .map(|i| {
+            let a = PI + i as f32 * PI / 16.0; // the left half, bottom to top
+            (cx + r * a.sin(), cy - r * a.cos())
+        })
+        .collect();
+    g.poly(&half, v.th.text);
+    hits.push((x, y, w, h, Action::Theme));
 }

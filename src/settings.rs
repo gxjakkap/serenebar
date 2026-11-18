@@ -171,11 +171,12 @@ pub enum Widget {
     DateClock,
     Mic,
     Network,
+    Theme,
 }
 
 impl Widget {
     /// In the order the settings window lists them.
-    pub const ALL: [Widget; 16] = [
+    pub const ALL: [Widget; 17] = [
         Widget::Weather,
         Widget::Media,
         Widget::System,
@@ -192,6 +193,7 @@ impl Widget {
         Widget::DateClock,
         Widget::Mic,
         Widget::Network,
+        Widget::Theme,
     ];
 
     /// Its name in the settings file.
@@ -213,6 +215,7 @@ impl Widget {
             Widget::DateClock => "dateclock",
             Widget::Mic => "mic",
             Widget::Network => "network",
+            Widget::Theme => "theme",
         }
     }
 
@@ -234,6 +237,7 @@ impl Widget {
             Widget::DateClock => "Tear-off clock",
             Widget::Mic => "Mute and deafen",
             Widget::Network => "Network speed",
+            Widget::Theme => "Light and dark",
         }
     }
 

@@ -789,6 +789,7 @@ impl App {
         self.d.tray = tray::icons();
         self.d.volume = controls::volume();
         self.d.mic = controls::mic_muted();
+        self.d.light = system::light_theme();
         self.d.lang = system::input_language();
         self.d.now = crate::dates::unix_now();
         self.d.time = system::local_time();
@@ -974,6 +975,7 @@ impl App {
             }
             Action::Mute => controls::toggle_mute(),
             Action::Mic => controls::toggle_mic(),
+            Action::Theme => system::toggle_theme(),
             Action::Volume => {
                 self.set_volume(frac);
                 return;

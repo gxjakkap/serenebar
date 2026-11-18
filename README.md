@@ -20,6 +20,7 @@ Not really. This is an experimental project that would unlikely to be maintained
 - **Hidden icons** (`tray`): a chevron that opens the notification-area icons in a grid above it.
 - **Show desktop** (`desktop`): minimises everything, or brings it back (Win+D).
 - **Network speed** (`network`): download and upload speed of the network adapters. Clicking it opens Task Manager.
+- **Light and dark** (`theme`): switches Windows apps and the taskbar between light and dark mode.
 - **Mute and deafen** (`mic`): two buttons, lit red while on: mute every microphone, and mute the speakers.
 - **Input language** (`lang`): the keyboard layout of the window in front, like ENG / US. Clicking it opens Windows' language switcher (Win+Space).
 
