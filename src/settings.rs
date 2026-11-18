@@ -282,7 +282,7 @@ impl Widget {
     pub fn variants(self) -> &'static [Variant] {
         use Variant::*;
         match self {
-            Widget::Clock => &[Large, Small, TearOff],
+            Widget::Clock => &[Large, Medium, Small],
             Widget::Media => &[Large, ExtraLarge, Medium, Small],
             Widget::Date => &[FullDate, DayNumber],
             Widget::Claude | Widget::Codex | Widget::Antigravity | Widget::Cursor => {
@@ -300,23 +300,21 @@ pub enum Variant {
     Large,
     Medium,
     Small,
-    TearOff,
     FullDate,
     DayNumber,
 }
 
 impl Variant {
-    pub const ALL: [Variant; 7] = [
+    pub const ALL: [Variant; 6] = [
         Variant::ExtraLarge,
         Variant::Large,
         Variant::Medium,
         Variant::Small,
-        Variant::TearOff,
         Variant::FullDate,
         Variant::DayNumber,
     ];
     pub fn id(self) -> &'static str {
-        ["xl", "l", "m", "s", "tearoff", "full", "day"][self as usize]
+        ["xl", "l", "m", "s", "full", "day"][self as usize]
     }
     pub fn label(self) -> &'static str {
         [
@@ -324,7 +322,6 @@ impl Variant {
             "Large",
             "Medium",
             "Small",
-            "Tear-off",
             "Full date",
             "Day number",
         ][self as usize]
@@ -504,11 +501,12 @@ impl Settings {
                 "widgets" => {
                     s.widgets = vec![];
                     for w in list(v, ',') {
-                        // the tear-off clock was its own tile before clocks had looks
+                        // the tear-off clock was its own tile before clocks had looks; the
+                        // medium clock took its place
                         let slot = match w.as_str() {
                             "|" => Some(Slot::Break),
                             "dateclock" => {
-                                s.variants.push((Widget::Clock, Variant::TearOff));
+                                s.variants.push((Widget::Clock, Variant::Medium));
                                 Some(Slot::Tile(Widget::Clock))
                             }
                             _ => Widget::parse(&w).map(Slot::Tile),
@@ -525,6 +523,7 @@ impl Settings {
                         .iter()
                         .filter_map(|p| {
                             let (w, x) = p.split_once(':')?;
+                            let x = if x == "tearoff" { "m" } else { x };
                             let (w, x) = (
                                 Widget::parse(w)?,
                                 Variant::ALL.into_iter().find(|x2| x2.id() == x)?,
@@ -906,13 +905,15 @@ mod tests {
             old.widgets,
             [Slot::Tile(Clock), Slot::Break, Slot::Tile(Apps)]
         );
-        assert_eq!(old.variant(Clock), Variant::TearOff);
+        assert_eq!(old.variant(Clock), Variant::Medium);
+        assert_eq!(
+            parse_test("variants=clock:tearoff").variant(Clock),
+            Variant::Medium
+        );
         let mut s = parse_test("variants=clock:s,apps:xl,nope:l,clock:zz");
         assert_eq!(s.variants, [(Clock, Variant::Small)]); // apps has no looks
         assert_eq!(parse_test(&s.to_ini()).variant(Clock), Variant::Small);
         assert_eq!(s.variant(Media), Variant::Large);
-        s.next_variant(Clock);
-        assert_eq!(s.variant(Clock), Variant::TearOff);
         s.next_variant(Clock);
         assert!(s.variant(Clock) == Variant::Large && s.variants.is_empty());
     }

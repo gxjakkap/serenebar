@@ -373,7 +373,7 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
         Widget::Clock => match v.s.variant(w) {
             Variant::Small if v.s.clock24 => 64.0 * k,
             Variant::Small => 84.0 * k,
-            Variant::TearOff => 56.0 * k,
+            Variant::Medium => 56.0 * k,
             _ => 100.0 * k,
         },
         Widget::Claude | Widget::Codex | Widget::Antigravity | Widget::Cursor
@@ -611,7 +611,7 @@ pub fn draw_tiles(g: &Gfx, v: &View, d: &Data, full_w: Option<f32>) -> Vec<Hit<A
                 Widget::Date => date(g, v, d, x, y, w, h, &mut hits),
                 Widget::Clock => match v.s.variant(widget) {
                     Variant::Small => small_clock(g, v, d, x, y, w, h, &mut hits),
-                    Variant::TearOff => dateclock(g, v, d, x, y, w, h, &mut hits),
+                    Variant::Medium => medium_clock(g, v, d, x, y, w, h, &mut hits),
                     _ => clock(g, v, d, x, y, w, h, &mut hits),
                 },
                 Widget::Claude | Widget::Codex | Widget::Antigravity | Widget::Cursor => {
@@ -976,8 +976,8 @@ fn small_clock(
     hits.push((x, y, w, h, act));
 }
 
-/// The red tear-off clock from the first version.
-fn dateclock(
+/// The time over the weekday and day, on a narrow tile.
+fn medium_clock(
     g: &Gfx,
     v: &View,
     d: &Data,
@@ -988,39 +988,35 @@ fn dateclock(
     hits: &mut Vec<Hit<Action>>,
 ) {
     let k = v.m.k;
+    let act = Action::Open(Panel::Calendar);
+    tile(g, v, x, y, w, h, v.hover == Some(act));
     let t = d.time;
-    let r = v.m.r_tile;
-    let split = h * 0.5;
-    g.fill_rr(x, y, w, h, r, rgba(0x111111, 1.0));
-    g.clip(x, y, w, split);
-    g.fill_rr(x, y, w, h, r, rgba(0xEE3800, 1.0));
-    g.unclip();
-    g.stroke_rr(x, y, w, h, r, v.th.tile_border, 1.0);
     // no AM/PM here: the tile is too narrow
     let time = if v.s.clock24 {
         format!("{:02}:{:02}", t.hour, t.minute)
     } else {
         format!("{}:{:02}", crate::dates::hour12(t.hour), t.minute)
     };
+    let half = h / 2.0;
     g.text(
         &time,
         x,
-        y + 1.0 * k,
+        y + 3.0 * k,
         w,
-        split,
+        half,
         font(k, 15.0),
-        500,
-        rgba(0x2A0E02, 0.92),
+        600,
+        v.th.text,
         Align::Center,
     );
     // weekday and day on one line: at 10 DIPs there's no room to stack them
-    let (by, bh) = (y + split, h - split);
+    let (by, bh) = (y + half - 1.0 * k, half);
     let wd = crate::dates::day_name(crate::dates::weekday(t.days()));
     let day = t.day.to_string();
     let (fw, fd) = (font(k, 10.0), font(k, 12.0));
     let (ww, dw, sp) = (g.measure(wd, fw, 500), g.measure(&day, fd, 600), 3.0 * k);
     let x0 = x + (w - ww - sp - dw) / 2.0;
-    g.text(wd, x0, by, ww + 1.0, bh, fw, 500, white(0.75), Align::Left);
+    g.text(wd, x0, by, ww + 1.0, bh, fw, 500, v.th.sub, Align::Left);
     g.text(
         &day,
         x0 + ww + sp,
@@ -1029,10 +1025,10 @@ fn dateclock(
         bh,
         fd,
         600,
-        white(1.0),
+        v.th.text,
         Align::Left,
     );
-    hits.push((x, y, w, h, Action::Open(Panel::Calendar)));
+    hits.push((x, y, w, h, act));
 }
 
 pub fn limit_color(pct: f32) -> C {
