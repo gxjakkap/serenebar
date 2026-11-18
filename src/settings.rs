@@ -279,6 +279,9 @@ impl Widget {
         use Variant::*;
         match self {
             Widget::Clock => &[Large, Small, TearOff],
+            Widget::Claude | Widget::Codex | Widget::Antigravity | Widget::Cursor => {
+                &[Large, Medium, Small]
+            }
             _ => &[],
         }
     }

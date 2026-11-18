@@ -17,7 +17,7 @@ Tiles with more than one look have a size chip on their row in Settings › Widg
 - **Music** (`media`): a pill tinted with the album art's colour, with "Title · Artist" and prev/play/next.
 - **Weather** (`weather`): condition, city and temperature on a blue tile.
 - **Clock** (`clock`): It's a clock, what more to say about it. Large has seconds and the date, Small only the time, and Tear-off is the red calendar-page clock.
-- **Claude** (`claude`) and **Codex** (`codex`): session and weekly plan limits with time to reset.
+- **Claude** (`claude`) and **Codex** (`codex`): session and weekly plan limits with time to reset. Medium shows a letter or three, the time to reset and the share left; Small only the letter and the share left. Cursor's tile has the same three looks.
 - **Cursor** (`cursor`): how much of the plan's included usage is gone, overall and for Auto and the named models, as Cursor's dashboard shows it, read from the sign-in Cursor keeps on this PC.
 - **DeepSeek** (`deepseek`): what's left on your DeepSeek API account. Add your API key under Settings › Feeds & accounts; it's kept encrypted for your Windows account.
 - **Gmail** (`gmail`): unread conversations in your inbox, through the same Google sign-in as the calendar ([setup](docs/google-calendar.md)).

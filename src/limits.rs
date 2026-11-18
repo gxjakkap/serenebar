@@ -40,6 +40,16 @@ impl Window {
             w => w.label(),
         }
     }
+
+    /// One to three letters, for the medium tile.
+    pub fn abbr(self) -> &'static str {
+        ["S", "W", "Op", "Son", "OS", "OW", "Inc", "A", "API"][self as usize]
+    }
+
+    /// One letter, for the small tile.
+    pub fn letter(self) -> &'static str {
+        &self.abbr()[..1]
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -979,5 +989,20 @@ mod tests {
         assert_eq!((l[0].window, l[0].pct), (Window::Included, 4.2));
         assert_eq!(l[0].resets, iso_to_unix("2026-11-28T00:00:00Z"));
         assert_eq!(parse_cursor_period(r#"{"planUsage":{}}"#), None);
+    }
+
+    #[test]
+    fn window_abbreviations() {
+        assert_eq!(
+            (Window::Session.abbr(), Window::Weekly.letter()),
+            ("S", "W")
+        );
+        assert_eq!(
+            (Window::Included.abbr(), Window::Included.letter()),
+            ("Inc", "I")
+        );
+        assert!([Window::Opus, Window::Sonnet, Window::Api]
+            .iter()
+            .all(|w| w.abbr().len() <= 3));
     }
 }

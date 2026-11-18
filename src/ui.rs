@@ -370,7 +370,11 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
         Widget::Claude | Widget::Codex | Widget::Antigravity | Widget::Cursor
             if d.limits(ai_panel(w)).is_some() =>
         {
-            196.0 * k
+            match v.s.variant(w) {
+                Variant::Medium => 144.0 * k,
+                Variant::Small => 88.0 * k,
+                _ => 196.0 * k,
+            }
         }
         Widget::Controls => {
             let w: f32 = v.s.controls.iter().map(|&c| control_w(c, d)).sum();
@@ -595,7 +599,12 @@ pub fn draw_tiles(g: &Gfx, v: &View, d: &Data, full_w: Option<f32>) -> Vec<Hit<A
                     _ => clock(g, v, d, x, y, w, h, &mut hits),
                 },
                 Widget::Claude | Widget::Codex | Widget::Antigravity | Widget::Cursor => {
-                    ai(g, v, d, ai_panel(widget), x, y, w, h, &mut hits)
+                    match v.s.variant(widget) {
+                        Variant::Medium | Variant::Small => {
+                            ai_compact(g, v, d, widget, x, y, w, h, &mut hits)
+                        }
+                        _ => ai(g, v, d, ai_panel(widget), x, y, w, h, &mut hits),
+                    }
                 }
                 Widget::Controls => controls(g, v, d, x, y, w, h, &mut hits),
                 Widget::Lang => lang(g, v, d, x, y, w, h, &mut hits),
@@ -1085,6 +1094,75 @@ pub fn ai_logo(g: &Gfx, which: Panel, x: f32, y: f32, s: f32) {
             let ((x0, y0), (x1, y1)) = (p(i), p(i + 1));
             g.line(x0, y0, x1, y1, rgba(0x111111, 1.0), s * 0.08);
         }
+    }
+}
+
+/// The medium and small AI tiles: a short label and the share left of each of the first two
+/// limits, with the time to reset between them on the medium one.
+fn ai_compact(
+    g: &Gfx,
+    v: &View,
+    d: &Data,
+    widget: Widget,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hits: &mut Vec<Hit<Action>>,
+) {
+    let (k, which) = (v.m.k, ai_panel(widget));
+    let medium = v.s.variant(widget) == Variant::Medium;
+    let act = Action::Open(which);
+    tile(g, v, x, y, w, h, v.hover == Some(act));
+    ai_logo(g, which, x + 6.0 * k, y + (h - 30.0 * k) / 2.0, 30.0 * k);
+    let f = font(k, 10.0);
+    let (lx, right) = (x + 42.0 * k, x + w - 7.0 * k);
+    let pct_w = g.measure("100%", f, 600);
+    for (row, l) in d.limits(which).unwrap_or(&[]).iter().take(2).enumerate() {
+        let (ry, rh) = (y + 6.0 * k + row as f32 * 18.0 * k, 16.0 * k);
+        let label = if medium {
+            l.window.abbr()
+        } else {
+            l.window.letter()
+        };
+        g.text(label, lx, ry, 28.0 * k, rh, f, 700, v.th.text, Align::Left);
+        let left = format!("{:.0}%", (100.0 - l.pct).clamp(0.0, 100.0));
+        g.text(
+            &left,
+            right - pct_w,
+            ry,
+            pct_w,
+            rh,
+            f,
+            600,
+            limit_text(v, l.pct),
+            Align::Right,
+        );
+        if let (true, Some(r)) = (medium, l.resets) {
+            let t = crate::dates::fmt_left(r - d.now);
+            let tx = lx + 26.0 * k;
+            g.text(
+                &t,
+                tx,
+                ry,
+                right - pct_w - 4.0 * k - tx,
+                rh,
+                f,
+                500,
+                v.th.sub,
+                Align::Left,
+            );
+        }
+    }
+    hits.push((x, y, w, h, act));
+}
+
+/// The share left, in the bar's text colour until it runs low.
+fn limit_text(v: &View, used: f32) -> C {
+    if used >= 90.0 {
+        rgba(0xFF453A, 1.0)
+    } else {
+        v.th.text
     }
 }
 
