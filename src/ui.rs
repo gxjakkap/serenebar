@@ -4,8 +4,8 @@ use crate::dock::MAG;
 use crate::gfx::{rgba, Align, Gfx, C};
 use crate::limits::Limit;
 use crate::settings::{
-    dark_text_on, Control, Settings, Size, Slot, Style, Widget, ACCENTS, ACCENT_TEXT, DANGER_TEXT,
-    GROUPS,
+    dark_text_on, Control, Settings, Size, Slot, Style, Variant, Widget, ACCENTS, ACCENT_TEXT,
+    DANGER_TEXT, GROUPS,
 };
 use crate::tray::TrayIcon;
 use crate::weather::Weather;
@@ -361,8 +361,12 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
         Widget::Apps if !d.apps.is_empty() => icons_w(v, 1..d.apps.len() + 1),
         Widget::Media => 196.0 * k,
         Widget::Weather => (WEATHER_PAD + d.weather_w).max(150.0) * k,
-        Widget::Clock => 100.0 * k,
-        Widget::DateClock => 56.0 * k,
+        Widget::Clock => match v.s.variant(w) {
+            Variant::Small if v.s.clock24 => 64.0 * k,
+            Variant::Small => 84.0 * k,
+            Variant::TearOff => 56.0 * k,
+            _ => 100.0 * k,
+        },
         Widget::Claude | Widget::Codex | Widget::Antigravity | Widget::Cursor
             if d.limits(ai_panel(w)).is_some() =>
         {
@@ -585,8 +589,11 @@ pub fn draw_tiles(g: &Gfx, v: &View, d: &Data, full_w: Option<f32>) -> Vec<Hit<A
                 Widget::Apps => icons(g, v, d, x, y, h, 1..d.apps.len() + 1, &mut hits),
                 Widget::Media => media(g, v, d, x, y, w, h, &mut hits),
                 Widget::Weather => weather(g, v, d, x, y, w, h, &mut hits),
-                Widget::Clock => clock(g, v, d, x, y, w, h, &mut hits),
-                Widget::DateClock => dateclock(g, v, d, x, y, w, h, &mut hits),
+                Widget::Clock => match v.s.variant(widget) {
+                    Variant::Small => small_clock(g, v, d, x, y, w, h, &mut hits),
+                    Variant::TearOff => dateclock(g, v, d, x, y, w, h, &mut hits),
+                    _ => clock(g, v, d, x, y, w, h, &mut hits),
+                },
                 Widget::Claude | Widget::Codex | Widget::Antigravity | Widget::Cursor => {
                     ai(g, v, d, ai_panel(widget), x, y, w, h, &mut hits)
                 }
@@ -916,6 +923,31 @@ fn clock(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut
         v.th.sub,
         Align::Center,
     );
+    hits.push((x, y, w, h, act));
+}
+
+/// Just the time, hours and minutes.
+fn small_clock(
+    g: &Gfx,
+    v: &View,
+    d: &Data,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hits: &mut Vec<Hit<Action>>,
+) {
+    let act = Action::Open(Panel::Calendar);
+    tile(g, v, x, y, w, h, v.hover == Some(act));
+    let t = d.time;
+    let time = if v.s.clock24 {
+        format!("{}:{:02}", t.hour, t.minute)
+    } else {
+        let ampm = if t.hour < 12 { "AM" } else { "PM" };
+        format!("{}:{:02} {ampm}", crate::dates::hour12(t.hour), t.minute)
+    };
+    let f = font(v.m.k, 17.0);
+    g.text(&time, x, y, w, h, f, 600, v.th.text, Align::Center);
     hits.push((x, y, w, h, act));
 }
 

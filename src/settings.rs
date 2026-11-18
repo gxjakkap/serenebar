@@ -168,7 +168,6 @@ pub enum Widget {
     Lang,
     Desktop,
     Clock,
-    DateClock,
     Mic,
     Network,
     Theme,
@@ -183,7 +182,7 @@ pub enum Widget {
 impl Widget {
     /// In the order the settings window lists them.
     /// Antigravity isn't offered yet: its numbers didn't match the app's on a Starter plan.
-    pub const ALL: [Widget; 22] = [
+    pub const ALL: [Widget; 21] = [
         Widget::Weather,
         Widget::Media,
         Widget::System,
@@ -201,7 +200,6 @@ impl Widget {
         Widget::Desktop,
         Widget::Notifications,
         Widget::Clock,
-        Widget::DateClock,
         Widget::Mic,
         Widget::Network,
         Widget::Theme,
@@ -224,7 +222,6 @@ impl Widget {
             Widget::Lang => "lang",
             Widget::Desktop => "desktop",
             Widget::Clock => "clock",
-            Widget::DateClock => "dateclock",
             Widget::Mic => "mic",
             Widget::Network => "network",
             Widget::Theme => "theme",
@@ -252,7 +249,6 @@ impl Widget {
             Widget::Lang => "Input language",
             Widget::Desktop => "Show desktop",
             Widget::Clock => "Clock",
-            Widget::DateClock => "Tear-off clock",
             Widget::Mic => "Mute and deafen",
             Widget::Network => "Network speed",
             Widget::Theme => "Light and dark",
@@ -276,6 +272,41 @@ impl Widget {
 
     pub fn parse(id: &str) -> Option<Widget> {
         Widget::ALL.into_iter().find(|w| w.id() == id)
+    }
+
+    /// The looks a tile comes in, the default first. Empty for tiles with only one.
+    pub fn variants(self) -> &'static [Variant] {
+        use Variant::*;
+        match self {
+            Widget::Clock => &[Large, Small, TearOff],
+            _ => &[],
+        }
+    }
+}
+
+/// One of the looks a tile comes in, picked per tile in Settings.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Variant {
+    ExtraLarge,
+    Large,
+    Medium,
+    Small,
+    TearOff,
+}
+
+impl Variant {
+    pub const ALL: [Variant; 5] = [
+        Variant::ExtraLarge,
+        Variant::Large,
+        Variant::Medium,
+        Variant::Small,
+        Variant::TearOff,
+    ];
+    pub fn id(self) -> &'static str {
+        ["xl", "l", "m", "s", "tearoff"][self as usize]
+    }
+    pub fn label(self) -> &'static str {
+        ["Extra large", "Large", "Medium", "Small", "Tear-off"][self as usize]
     }
 }
 
@@ -346,6 +377,8 @@ pub struct Settings {
     pub clock24: bool,
     pub hide_taskbar: bool,
     pub widgets: Vec<Slot>,
+    /// The look picked for each tile that has a choice. Tiles not listed use their first.
+    pub variants: Vec<(Widget, Variant)>,
     pub controls: Vec<Control>, // in Control::ALL order
     pub app_order: Vec<String>, // dock order the user dragged apps into, by app key
     /// Dock pins: shortcut paths, exe paths or `shell:AppsFolder\\<id>`.
@@ -384,6 +417,7 @@ impl Default for Settings {
             clock24: true,
             hide_taskbar: false,
             widgets,
+            variants: vec![],
             controls: vec![
                 Control::Wifi,
                 Control::Bluetooth,
@@ -447,14 +481,34 @@ impl Settings {
                 "clock" => s.clock24 = v != "12",
                 "taskbar" => s.hide_taskbar = v == "hidden",
                 "widgets" => {
-                    s.widgets = list(v, ',')
-                        .iter()
-                        .filter_map(|w| {
-                            if w == "|" {
-                                Some(Slot::Break)
-                            } else {
-                                Widget::parse(w).map(Slot::Tile)
+                    s.widgets = vec![];
+                    for w in list(v, ',') {
+                        // the tear-off clock was its own tile before clocks had looks
+                        let slot = match w.as_str() {
+                            "|" => Some(Slot::Break),
+                            "dateclock" => {
+                                s.variants.push((Widget::Clock, Variant::TearOff));
+                                Some(Slot::Tile(Widget::Clock))
                             }
+                            _ => Widget::parse(&w).map(Slot::Tile),
+                        };
+                        if let Some(slot) =
+                            slot.filter(|t| *t == Slot::Break || !s.widgets.contains(t))
+                        {
+                            s.widgets.push(slot);
+                        }
+                    }
+                }
+                "variants" => {
+                    s.variants = list(v, ',')
+                        .iter()
+                        .filter_map(|p| {
+                            let (w, x) = p.split_once(':')?;
+                            let (w, x) = (
+                                Widget::parse(w)?,
+                                Variant::ALL.into_iter().find(|x2| x2.id() == x)?,
+                            );
+                            w.variants().contains(&x).then_some((w, x))
                         })
                         .collect()
                 }
@@ -494,8 +548,13 @@ impl Settings {
             })
             .collect();
         let controls: Vec<&str> = self.controls.iter().map(|c| c.id()).collect();
+        let variants: Vec<String> = self
+            .variants
+            .iter()
+            .map(|(w, x)| format!("{}:{}", w.id(), x.id()))
+            .collect();
         format!(
-            "style={}\nsize={}\nedge={}\nwidth={}\nmonitors={}\naccent={}\nclock={}\ntaskbar={}\nupdates={}\nwidgets={}\ncontrols={}\napp_order={}\npins={}\n\
+            "style={}\nsize={}\nedge={}\nwidth={}\nmonitors={}\naccent={}\nclock={}\ntaskbar={}\nupdates={}\nwidgets={}\nvariants={}\ncontrols={}\napp_order={}\npins={}\n\
              # weather: a city name, or latitude/longitude in decimal degrees to override it. units is c or f.\n\
              city={}\nlatitude={}\nlongitude={}\nunits={}\n\
              # calendar: the secret iCal (.ics) link from Google, Outlook or iCloud\ncalendar={}\n\
@@ -507,7 +566,7 @@ impl Settings {
             if self.full { "full" } else { "pill" }, if self.every_monitor { "all" } else { "primary" }, ACCENTS[self.accent].1.to_lowercase(),
             if self.clock24 { 24 } else { 12 }, if self.hide_taskbar { "hidden" } else { "autohide" },
             if self.auto_update { "auto" } else { "manual" },
-            widgets.join(","), controls.join(","), self.app_order.join("|"), self.pins.join("|"), self.city, opt(self.lat), opt(self.lon),
+            widgets.join(","), variants.join(","), controls.join(","), self.app_order.join("|"), self.pins.join("|"), self.city, opt(self.lat), opt(self.lon),
             if self.fahrenheit { "f" } else { "c" }, self.calendar, self.google_id, self.google_secret,
             self.deepseek_key,
         )
@@ -529,6 +588,29 @@ impl Settings {
 
     pub fn shows(&self, w: Widget) -> bool {
         self.widgets.contains(&Slot::Tile(w))
+    }
+
+    /// The look of tile `w`: the one picked, else its first.
+    pub fn variant(&self, w: Widget) -> Variant {
+        self.variants
+            .iter()
+            .find(|v| v.0 == w)
+            .map(|v| v.1)
+            .or(w.variants().first().copied())
+            .unwrap_or(Variant::Large)
+    }
+
+    /// Moves tile `w` on to its next look, round to the first after the last.
+    pub fn next_variant(&mut self, w: Widget) {
+        let all = w.variants();
+        let Some(i) = all.iter().position(|&x| x == self.variant(w)) else {
+            return;
+        };
+        let next = all[(i + 1) % all.len()];
+        self.variants.retain(|v| v.0 != w);
+        if next != all[0] {
+            self.variants.push((w, next));
+        }
     }
 }
 
@@ -794,5 +876,23 @@ mod tests {
         );
         assert_eq!(s.pins.len(), 3);
         assert_eq!(parse_test(&s.to_ini()).pins, s.pins);
+    }
+
+    #[test]
+    fn variants_roundtrip_and_old_tear_off_clock() {
+        let old = parse_test("widgets=clock,dateclock,|,apps");
+        assert_eq!(
+            old.widgets,
+            [Slot::Tile(Clock), Slot::Break, Slot::Tile(Apps)]
+        );
+        assert_eq!(old.variant(Clock), Variant::TearOff);
+        let mut s = parse_test("variants=clock:s,apps:xl,nope:l,clock:zz");
+        assert_eq!(s.variants, [(Clock, Variant::Small)]); // apps has no looks
+        assert_eq!(parse_test(&s.to_ini()).variant(Clock), Variant::Small);
+        assert_eq!(s.variant(Media), Variant::Large);
+        s.next_variant(Clock);
+        assert_eq!(s.variant(Clock), Variant::TearOff);
+        s.next_variant(Clock);
+        assert!(s.variant(Clock) == Variant::Large && s.variants.is_empty());
     }
 }

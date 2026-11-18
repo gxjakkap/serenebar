@@ -33,6 +33,7 @@ pub enum Act {
     Remove(usize),
     Add(usize), // a group's +: pick a hidden widget to show there
     Drag(usize),
+    Variant(usize), // a widget row's look: on to the next one
     Control(Control),
     Focus(Field),
     Pick(usize),
@@ -800,7 +801,7 @@ fn widgets(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, x0: f32, cw: f32) {
             g.fill_rr(x0 - 6.0, y, w3 + 12.0, ROW, 8.0, c.p.card);
             g.stroke_rr(x0 - 6.0, y, w3 + 12.0, ROW, 8.0, c.accent, 1.5);
         }
-        row(g, c, st, i, r, x0, y, w3);
+        row(g, c, st, s, i, r, x0, y, w3);
     }
     if let Some(d) = held {
         g.fill_rr(
@@ -1053,7 +1054,17 @@ fn feeds(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, flags: &Flags, x0: f32,
     }
 }
 
-fn row(g: &Gfx, c: &mut Ctx, st: &State, i: usize, r: &WidgetRow, x: f32, y: f32, w: f32) {
+fn row(
+    g: &Gfx,
+    c: &mut Ctx,
+    st: &State,
+    s: &Settings,
+    i: usize,
+    r: &WidgetRow,
+    x: f32,
+    y: f32,
+    w: f32,
+) {
     if st.drag.is_none() {
         c.hover(g, Act::Drag(i), x + 24.0, y + 1.0, w - 24.0, ROW - 2.0, 8.0);
     }
@@ -1066,11 +1077,35 @@ fn row(g: &Gfx, c: &mut Ctx, st: &State, i: usize, r: &WidgetRow, x: f32, y: f32
     if st.drag.is_none() {
         c.hits.push((x - 2.0, y, 26.0, ROW, Act::Remove(i)));
     }
+    // its look, for tiles that have more than one: click for the next
+    let mut label_w = w - 68.0;
+    if r.widget.variants().len() > 1 {
+        let look = s.variant(r.widget).label();
+        let cw = g.measure(look, 11.0, 600) + 22.0;
+        let (cx, cy) = (x + w - 30.0 - cw, y + 4.0);
+        g.fill_rr(cx, cy, cw, ROW - 8.0, 7.0, c.p.card);
+        if st.drag.is_none() {
+            c.hover(g, Act::Variant(i), cx, cy, cw, ROW - 8.0, 7.0);
+            c.hits.push((cx, cy, cw, ROW - 8.0, Act::Variant(i)));
+        }
+        g.text(
+            look,
+            cx + 8.0,
+            cy,
+            cw - 16.0,
+            ROW - 8.0,
+            11.0,
+            600,
+            c.link,
+            Align::Center,
+        );
+        label_w -= cw + 6.0;
+    }
     g.text(
         r.widget.label(),
         x + 30.0,
         y,
-        w - 68.0,
+        label_w,
         ROW,
         12.0,
         500,

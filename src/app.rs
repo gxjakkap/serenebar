@@ -1442,6 +1442,17 @@ impl App {
                 }
             }
             Act::Drag(_) => {}
+            Act::Variant(i) => {
+                let Some(w) = self
+                    .prefs
+                    .as_ref()
+                    .and_then(|p| p.st.rows.get(i))
+                    .map(|r| r.widget)
+                else {
+                    return;
+                };
+                self.change(|s| s.next_variant(w));
+            }
             Act::About => self.toggle_panel(Panel::About),
             Act::GoogleSignIn => google::sign_in(
                 self.s.google_id.clone(),

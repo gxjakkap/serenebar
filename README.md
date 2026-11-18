@@ -10,11 +10,13 @@ Not really. This is an experimental project that would unlikely to be maintained
 
 ## Widgets
 
+Tiles with more than one look have a size chip on their row in Settings › Widgets; click it for the next look.
+
 - **Start** (`start`): the Windows 11 Start logo
 - **Apps** (`apps`): the dock's pinned apps, then other open apps in the order they opened
 - **Music** (`media`): a pill tinted with the album art's colour, with "Title · Artist" and prev/play/next.
 - **Weather** (`weather`): condition, city and temperature on a blue tile.
-- **Clock** (`clock`): It's a clock, what more to say about it.
+- **Clock** (`clock`): It's a clock, what more to say about it. Large has seconds and the date, Small only the time, and Tear-off is the red calendar-page clock.
 - **Claude** (`claude`) and **Codex** (`codex`): session and weekly plan limits with time to reset.
 - **Cursor** (`cursor`): how much of the plan's included usage is gone, overall and for Auto and the named models, as Cursor's dashboard shows it, read from the sign-in Cursor keeps on this PC.
 - **DeepSeek** (`deepseek`): what's left on your DeepSeek API account. Add your API key under Settings › Feeds & accounts; it's kept encrypted for your Windows account.
