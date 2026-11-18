@@ -188,6 +188,8 @@ pub enum Action {
     Mic,
     Theme,
     Volume,
+    AppVolume(usize), // an app's slider in the quick controls panel
+    AppMute(usize),
     Settings,
     Language,
     ShowDesktop,
@@ -213,9 +215,10 @@ pub struct Data {
     pub update: Option<crate::update::Release>, // a newer release than this build
     pub update_note: &'static str,              // how a check from Settings went
     pub volume: Option<crate::controls::Volume>,
-    pub mic: Option<bool>,       // muted; None without a microphone
-    pub net: Option<(f64, f64)>, // bytes per second down and up
-    pub light: Option<bool>,     // Windows apps are in light mode
+    pub app_volumes: Vec<crate::controls::AppVolume>, // read only while the controls panel is open
+    pub mic: Option<bool>,                            // muted; None without a microphone
+    pub net: Option<(f64, f64)>,                      // bytes per second down and up
+    pub light: Option<bool>,                          // Windows apps are in light mode
     pub wifi: Option<bool>,
     pub vpn: Option<bool>,
     pub airplane: Option<bool>,

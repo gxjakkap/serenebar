@@ -16,7 +16,8 @@ pub struct State {
     pub hover: Option<usize>, // hidden-icons panel: the icon under the cursor
     pub over: Option<Act>,    // the control under the cursor
     pub month: (i32, u32),
-    pub selected: i64, // day shown in the calendar's side list
+    pub selected: i64,   // day shown in the calendar's side list
+    pub app_rows: usize, // quick controls: app volume rows the panel was sized for
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -40,6 +41,7 @@ impl State {
             over: None,
             month: (today.year, today.month),
             selected: today.days(),
+            app_rows: 0,
         }
     }
 
@@ -72,9 +74,9 @@ fn limits(kind: Panel, d: &Data) -> &[Limit] {
 /// The volume slider takes presses a little past its ends.
 const SLIDER_SLACK: f32 = 10.0;
 
-/// The level the volume slider in `hits` would set with the cursor at `x`, even outside it.
-pub fn volume_at(hits: &[Hit], x: f32) -> Option<f32> {
-    let (hx, hw) = crate::ui::hit_span(hits, Act::Do(Action::Volume))?;
+/// The level the volume slider for `act` would set with the cursor at `x`, even outside it.
+pub fn volume_at(hits: &[Hit], act: Action, x: f32) -> Option<f32> {
+    let (hx, hw) = crate::ui::hit_span(hits, Act::Do(act))?;
     Some((x - hx - SLIDER_SLACK) / (hw - 2.0 * SLIDER_SLACK))
 }
 
@@ -89,6 +91,18 @@ const AI_ROW: f32 = 56.0;
 const AI_SOURCE: f32 = 34.0;
 const CONTROLS_ROWS: [f32; 4] = [56.0, 116.0, 164.0, 82.0]; // title, now playing, toggles, volume
 const BATTERY_ROW: f32 = 30.0;
+const APP_ROW: f32 = 44.0;
+/// At most this many apps get a volume slider, so the panel stays on screen.
+pub const APP_ROWS: usize = 6;
+
+/// Room the app volume card takes for `rows` apps.
+fn apps_h(rows: usize) -> f32 {
+    if rows == 0 {
+        0.0
+    } else {
+        rows as f32 * APP_ROW + 20.0
+    }
+}
 const FOOTER: f32 = 48.0;
 
 pub fn size(kind: Panel, d: &Data) -> (f32, f32) {
@@ -107,6 +121,7 @@ pub fn size(kind: Panel, d: &Data) -> (f32, f32) {
         Panel::Controls => (
             340.0,
             CONTROLS_ROWS.iter().sum::<f32>()
+                + apps_h(d.app_volumes.len().min(APP_ROWS))
                 + if d.battery.is_some() {
                     BATTERY_ROW
                 } else {
@@ -680,7 +695,6 @@ fn controls(
     h: f32,
     hits: &mut Vec<Hit>,
 ) {
-    let white = rgba(0xFFFFFF, 1.0);
     let (x, cw) = (16.0, w - 32.0);
     g.text(
         "Quick controls",
@@ -831,26 +845,61 @@ fn controls(
         Align::Right,
     );
     speaker_glyph(g, x + 26.0, y + 46.0, 18.0, muted, p.text);
-    let (tx, tw, ty) = (x + 50.0, cw - 72.0, y + 46.0);
-    g.fill_rr(tx, ty - 2.5, tw, 5.0, 2.5, p.border);
-    g.fill_rr(
-        tx,
-        ty - 2.5,
-        tw * level,
-        5.0,
-        2.5,
-        if muted { p.sub } else { accent },
-    );
-    g.fill_circle(tx + tw * level, ty, 9.0, white);
-    g.arc(tx + tw * level, ty, 9.0, 1.0, p.border, 1.0);
-    hits.push((
-        tx - SLIDER_SLACK,
-        ty - 16.0,
-        tw + 2.0 * SLIDER_SLACK,
-        32.0,
-        Act::Do(Action::Volume),
-    ));
+    let s = (x + 50.0, cw - 72.0, y + 46.0);
+    slider(g, p, accent, s, level, muted, Action::Volume, hits);
     y += CONTROLS_ROWS[3];
+
+    // each app's own volume, under the device's
+    let apps = &d.app_volumes[..d.app_volumes.len().min(st.app_rows)];
+    if !apps.is_empty() {
+        g.fill_rr(x, y - 6.0, cw, apps_h(apps.len()) - 12.0, 14.0, p.card);
+        for (i, a) in apps.iter().enumerate() {
+            let ry = y + i as f32 * APP_ROW;
+            let mute = Act::Do(Action::AppMute(i));
+            hover(g, p, st, mute, x + 6.0, ry + 4.0, 40.0, APP_ROW - 8.0, 10.0);
+            speaker_glyph(g, x + 26.0, ry + APP_ROW / 2.0, 15.0, a.muted, p.text);
+            hits.push((x + 6.0, ry + 4.0, 40.0, APP_ROW - 8.0, mute));
+            g.text(
+                &a.name,
+                x + 50.0,
+                ry + 2.0,
+                cw - 130.0,
+                18.0,
+                11.0,
+                600,
+                p.sub,
+                Align::Left,
+            );
+            let pct = if a.muted {
+                "Muted".to_string()
+            } else {
+                format!("{:.0}%", a.level * 100.0)
+            };
+            g.text(
+                &pct,
+                x + cw - 70.0,
+                ry + 2.0,
+                54.0,
+                18.0,
+                11.0,
+                600,
+                p.text,
+                Align::Right,
+            );
+            let s = (x + 50.0, cw - 72.0, ry + 30.0);
+            slider(
+                g,
+                p,
+                accent,
+                s,
+                a.level,
+                a.muted,
+                Action::AppVolume(i),
+                hits,
+            );
+        }
+        y += apps_h(apps.len());
+    }
 
     if let Some((f, charging)) = d.battery {
         let state = if charging { "Charging" } else { "On battery" };
@@ -1096,4 +1145,30 @@ fn tray(g: &Gfx, p: &Pal, st: &State, d: &Data, w: f32, h: f32, hits: &mut Vec<H
         color,
         Align::Left,
     );
+}
+
+/// A volume slider along `(x, width, y)`, dragged or clicked. Muted, it shows its level greyed.
+fn slider(
+    g: &Gfx,
+    p: &Pal,
+    accent: C,
+    (tx, tw, ty): (f32, f32, f32),
+    level: f32,
+    muted: bool,
+    act: Action,
+    hits: &mut Vec<Hit>,
+) {
+    let level = level.clamp(0.0, 1.0);
+    g.fill_rr(tx, ty - 2.5, tw, 5.0, 2.5, p.border);
+    let fill = if muted { p.sub } else { accent };
+    g.fill_rr(tx, ty - 2.5, tw * level, 5.0, 2.5, fill);
+    g.fill_circle(tx + tw * level, ty, 9.0, rgba(0xFFFFFF, 1.0));
+    g.arc(tx + tw * level, ty, 9.0, 1.0, p.border, 1.0);
+    hits.push((
+        tx - SLIDER_SLACK,
+        ty - 16.0,
+        tw + 2.0 * SLIDER_SLACK,
+        32.0,
+        Act::Do(act),
+    ));
 }

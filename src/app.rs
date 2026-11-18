@@ -108,7 +108,7 @@ struct PanelWin {
     g: gfx::Gfx,
     st: panel::State,
     hits: Vec<panel::Hit>,
-    dragging: bool, // the volume slider has the mouse
+    dragging: Option<Action>, // the volume slider that has the mouse
     opened: Instant,
 }
 
@@ -788,6 +788,15 @@ impl App {
         }
         self.d.tray = tray::icons();
         self.d.volume = controls::volume();
+        let mixer = self
+            .panel
+            .as_ref()
+            .is_some_and(|p| p.st.kind == Panel::Controls);
+        self.d.app_volumes = if mixer {
+            controls::app_volumes()
+        } else {
+            vec![]
+        };
         self.d.mic = controls::mic_muted();
         self.d.light = system::light_theme();
         self.d.lang = system::input_language();
@@ -982,6 +991,12 @@ impl App {
             }
             Action::Mute => controls::toggle_mute(),
             Action::Mic => controls::toggle_mic(),
+            Action::AppMute(i) => {
+                if let Some(a) = self.d.app_volumes.get(i) {
+                    controls::toggle_app_mute(&a.name);
+                }
+            }
+            Action::AppVolume(_) => {} // dragged in the panel
             Action::Theme => system::toggle_theme(),
             Action::Volume => {
                 self.set_volume(frac);
@@ -1010,6 +1025,9 @@ impl App {
         // anchored over its tile; panels without one (About) open over the middle of the bar
         let (hx, hw) = ui::hit_span(&b.hits, Action::Open(kind))
             .unwrap_or((0.0, (bar.right - bar.left) as f32 / k));
+        if kind == Panel::Controls {
+            self.d.app_volumes = controls::app_volumes();
+        }
         let (pw, ph) = panel::size(kind, &self.d);
         let (w, h) = ((pw * k).ceil() as i32, (ph * k).ceil() as i32);
         let gap = (10.0 * k) as i32;
@@ -1032,13 +1050,14 @@ impl App {
         ) else {
             return;
         };
-        let st = panel::State::new(kind, self.d.time);
+        let mut st = panel::State::new(kind, self.d.time);
+        st.app_rows = self.d.app_volumes.len().min(panel::APP_ROWS);
         self.panel = Some(PanelWin {
             hwnd,
             g,
             st,
             hits: vec![],
-            dragging: false,
+            dragging: None,
             opened: Instant::now(),
         });
         self.show(hwnd);
@@ -1091,11 +1110,22 @@ impl App {
         ui::hit_test(&p.hits, x as f32 / p.g.k, y as f32 / p.g.k)
     }
 
-    /// Sets the volume from where the cursor is along the slider, even outside it while dragging.
+    /// Sets the volume from where the cursor is along the slider being dragged, even outside it.
     fn panel_volume(&mut self, lp: LPARAM) {
         let Some(p) = &self.panel else { return };
-        if let Some(level) = panel::volume_at(&p.hits, xy(lp).0 as f32 / p.g.k) {
-            self.set_volume(level);
+        let Some(act) = p.dragging else { return };
+        let Some(level) = panel::volume_at(&p.hits, act, xy(lp).0 as f32 / p.g.k) else {
+            return;
+        };
+        match act {
+            Action::AppVolume(i) => {
+                if let Some(a) = self.d.app_volumes.get(i) {
+                    controls::set_app_volume(&a.name, level);
+                }
+                self.d.app_volumes = controls::app_volumes();
+                self.draw_panel();
+            }
+            _ => self.set_volume(level),
         }
     }
 
@@ -1107,9 +1137,11 @@ impl App {
     }
 
     fn panel_press(&mut self, lp: LPARAM) {
-        if let Some((panel::Act::Do(Action::Volume), _)) = self.panel_hit(lp) {
+        if let Some((panel::Act::Do(a @ (Action::Volume | Action::AppVolume(_))), _)) =
+            self.panel_hit(lp)
+        {
             if let Some(p) = &mut self.panel {
-                p.dragging = true;
+                p.dragging = Some(a);
                 unsafe {
                     SetCapture(p.hwnd);
                 }
@@ -1119,7 +1151,7 @@ impl App {
     }
 
     fn panel_move(&mut self, lp: LPARAM) {
-        if self.panel.as_ref().is_some_and(|p| p.dragging) {
+        if self.panel.as_ref().is_some_and(|p| p.dragging.is_some()) {
             self.panel_volume(lp);
             return;
         }
@@ -1149,8 +1181,8 @@ impl App {
     }
 
     fn panel_click(&mut self, lp: LPARAM) {
-        if let Some(p) = self.panel.as_mut().filter(|p| p.dragging) {
-            p.dragging = false;
+        if let Some(p) = self.panel.as_mut().filter(|p| p.dragging.is_some()) {
+            p.dragging = None;
             unsafe {
                 let _ = ReleaseCapture();
             }
@@ -1167,7 +1199,7 @@ impl App {
         match act {
             panel::Act::Close => self.close_panel(),
             panel::Act::TrayIcon(i) => self.tray_click(i, false),
-            panel::Act::Do(Action::Volume) => {} // the press already set it
+            panel::Act::Do(Action::Volume | Action::AppVolume(_)) => {} // the press set it
             // anything that opens another window takes the focus, which closes the panel
             panel::Act::Do(a) => self.act(a, frac),
             _ => {}

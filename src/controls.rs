@@ -506,3 +506,106 @@ pub fn toggle_mute() {
         let _ = vol.SetMute(!muted, std::ptr::null());
     }
 }
+
+/// One app's volume in the mixer. Apps with several streams show as one.
+pub struct AppVolume {
+    pub name: String,
+    pub level: f32,
+    pub muted: bool,
+}
+
+/// Names by process id. Reading a program's description goes through the shell, too slow to
+/// repeat for every move of a slider.
+static NAMES: Mutex<Vec<(u32, String)>> = Mutex::new(vec![]);
+
+fn app_name(pid: u32) -> Option<String> {
+    if let Some((_, n)) = NAMES.lock().unwrap().iter().find(|e| e.0 == pid) {
+        return Some(n.clone());
+    }
+    let name = crate::apps::exe_name(&crate::apps::exe_of_pid(pid)?);
+    let mut names = NAMES.lock().unwrap();
+    if names.len() > 64 {
+        names.clear(); // ids get reused; start over now and then
+    }
+    names.push((pid, name.clone()));
+    Some(name)
+}
+
+/// The default output's audio sessions that haven't ended, each with its app's name.
+fn sessions() -> Vec<(String, windows::Win32::Media::Audio::ISimpleAudioVolume)> {
+    use windows::Win32::Media::Audio::*;
+    let Some((dev, _)) = endpoint() else {
+        return vec![];
+    };
+    let mut out = vec![];
+    unsafe {
+        let Ok(mgr) = dev.Activate::<IAudioSessionManager2>(CLSCTX_ALL, None) else {
+            return out;
+        };
+        let Ok(list) = mgr.GetSessionEnumerator() else {
+            return out;
+        };
+        for i in 0..list.GetCount().unwrap_or(0) {
+            let Ok(s) = list.GetSession(i) else { continue };
+            if s.GetState().is_ok_and(|st| st == AudioSessionStateExpired) {
+                continue;
+            }
+            let (Ok(s2), Ok(vol)) = (
+                s.cast::<IAudioSessionControl2>(),
+                s.cast::<ISimpleAudioVolume>(),
+            ) else {
+                continue;
+            };
+            let name = if s2.IsSystemSoundsSession() == S_OK {
+                "System sounds".to_string()
+            } else {
+                match s2.GetProcessId().ok().and_then(app_name) {
+                    Some(name) => name,
+                    None => continue,
+                }
+            };
+            out.push((name, vol));
+        }
+    }
+    out
+}
+
+/// Every app with sound on the default output, in the order Windows lists them.
+pub fn app_volumes() -> Vec<AppVolume> {
+    let mut out: Vec<AppVolume> = vec![];
+    for (name, vol) in sessions() {
+        if out.iter().any(|a| a.name == name) {
+            continue;
+        }
+        let (level, muted) = unsafe {
+            (
+                vol.GetMasterVolume().unwrap_or(1.0),
+                vol.GetMute().is_ok_and(|m| m.as_bool()),
+            )
+        };
+        out.push(AppVolume { name, level, muted });
+    }
+    out
+}
+
+/// Sets the level of every stream of the app called `name`, and unmutes it.
+pub fn set_app_volume(name: &str, level: f32) {
+    for (_, vol) in sessions().into_iter().filter(|s| s.0 == name) {
+        unsafe {
+            let _ = vol.SetMasterVolume(level.clamp(0.0, 1.0), std::ptr::null());
+            let _ = vol.SetMute(false, std::ptr::null());
+        }
+    }
+}
+
+pub fn toggle_app_mute(name: &str) {
+    let streams: Vec<_> = sessions().into_iter().filter(|s| s.0 == name).collect();
+    let muted = streams
+        .first()
+        .is_some_and(|(_, v)| unsafe { v.GetMute().is_ok_and(|m| m.as_bool()) });
+    for (_, vol) in streams {
+        unsafe {
+            let _ = vol.SetMute(!muted, std::ptr::null());
+        }
+    }
+}
