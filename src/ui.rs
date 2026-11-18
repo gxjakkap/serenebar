@@ -2,7 +2,7 @@
 use crate::dates::LocalTime;
 use crate::dock::MAG;
 use crate::gfx::{rgba, Align, Gfx, C};
-use crate::limits::{Limit, Window};
+use crate::limits::Limit;
 use crate::settings::{
     dark_text_on, Control, Settings, Size, Slot, Style, Widget, ACCENTS, ACCENT_TEXT, DANGER_TEXT,
     GROUPS,
@@ -165,6 +165,7 @@ pub enum Panel {
     Calendar,
     Claude,
     Codex,
+    Antigravity,
     Controls,
     About,
     Tray,
@@ -212,6 +213,7 @@ pub struct Data {
     pub events: Vec<crate::calendar::Event>,
     pub claude: Option<Vec<Limit>>,
     pub codex: Option<Vec<Limit>>,
+    pub antigravity: Option<Vec<Limit>>,
     pub update: Option<crate::update::Release>, // a newer release than this build
     pub update_note: &'static str,              // how a check from Settings went
     pub volume: Option<crate::controls::Volume>,
@@ -352,8 +354,9 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
         Widget::Weather => (WEATHER_PAD + d.weather_w).max(150.0) * k,
         Widget::Clock => 100.0 * k,
         Widget::DateClock => 56.0 * k,
-        Widget::Claude if d.claude.is_some() => 196.0 * k,
-        Widget::Codex if d.codex.is_some() => 196.0 * k,
+        Widget::Claude | Widget::Codex | Widget::Antigravity if d.limits(ai_panel(w)).is_some() => {
+            196.0 * k
+        }
         Widget::Controls => {
             let w: f32 = v.s.controls.iter().map(|&c| control_w(c, d)).sum();
             if w == 0.0 {
@@ -368,9 +371,12 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
         Widget::Network => 92.0 * k,
         Widget::Progress => 140.0 * k,
         Widget::Battery if d.battery.is_some() => 56.0 * k,
-        Widget::Apps | Widget::Claude | Widget::Codex | Widget::Lang | Widget::Battery => {
-            return None
-        }
+        Widget::Apps
+        | Widget::Claude
+        | Widget::Codex
+        | Widget::Antigravity
+        | Widget::Lang
+        | Widget::Battery => return None,
     })
 }
 
@@ -567,30 +573,9 @@ pub fn draw_tiles(g: &Gfx, v: &View, d: &Data, full_w: Option<f32>) -> Vec<Hit<A
                 Widget::Weather => weather(g, v, d, x, y, w, h, &mut hits),
                 Widget::Clock => clock(g, v, d, x, y, w, h, &mut hits),
                 Widget::DateClock => dateclock(g, v, d, x, y, w, h, &mut hits),
-                Widget::Claude => ai(
-                    g,
-                    v,
-                    Panel::Claude,
-                    d.claude.as_deref().unwrap_or(&[]),
-                    d.now,
-                    x,
-                    y,
-                    w,
-                    h,
-                    &mut hits,
-                ),
-                Widget::Codex => ai(
-                    g,
-                    v,
-                    Panel::Codex,
-                    d.codex.as_deref().unwrap_or(&[]),
-                    d.now,
-                    x,
-                    y,
-                    w,
-                    h,
-                    &mut hits,
-                ),
+                Widget::Claude | Widget::Codex | Widget::Antigravity => {
+                    ai(g, v, d, ai_panel(widget), x, y, w, h, &mut hits)
+                }
                 Widget::Controls => controls(g, v, d, x, y, w, h, &mut hits),
                 Widget::Lang => lang(g, v, d, x, y, w, h, &mut hits),
                 Widget::Tray => tray(g, v, x, y, w, h, &mut hits),
@@ -989,10 +974,31 @@ pub fn limit_color(pct: f32) -> C {
     )
 }
 
+/// The panel an AI limits tile opens.
+fn ai_panel(w: Widget) -> Panel {
+    match w {
+        Widget::Codex => Panel::Codex,
+        Widget::Antigravity => Panel::Antigravity,
+        _ => Panel::Claude,
+    }
+}
+
 /// Claude: an orange square with a starburst. Codex: a white square with a hexagon.
+/// Antigravity: a white square with Gemini's four-pointed star.
 pub fn ai_logo(g: &Gfx, which: Panel, x: f32, y: f32, s: f32) {
     let (cx, cy) = (x + s / 2.0, y + s / 2.0);
-    if which == Panel::Claude {
+    if which == Panel::Antigravity {
+        g.fill_rr(x, y, s, s, s * 0.24, white(1.0));
+        let (r, n) = (s * 0.34, s * 0.06); // tip and waist
+        let star: Vec<(f32, f32)> = (0..8)
+            .map(|i| {
+                let a = i as f32 * PI / 4.0;
+                let d = if i % 2 == 0 { r } else { n };
+                (cx + a.sin() * d, cy - a.cos() * d)
+            })
+            .collect();
+        g.poly(&star, rgba(0x4C7BF3, 1.0));
+    } else if which == Panel::Claude {
         g.fill_rr(x, y, s, s, s * 0.24, rgba(0xD97757, 1.0));
         for i in 0..8 {
             let a = i as f32 * PI / 4.0 + 0.2;
@@ -1021,9 +1027,8 @@ pub fn ai_logo(g: &Gfx, which: Panel, x: f32, y: f32, s: f32) {
 fn ai(
     g: &Gfx,
     v: &View,
+    d: &Data,
     which: Panel,
-    limits: &[Limit],
-    now: i64,
     x: f32,
     y: f32,
     w: f32,
@@ -1034,12 +1039,14 @@ fn ai(
     let act = Action::Open(which);
     tile(g, v, x, y, w, h, v.hover == Some(act));
     ai_logo(g, which, x + 6.0 * k, y + (h - 30.0 * k) / 2.0, 30.0 * k);
+    // the first two limits, which every source lists first: session and week, or the month
+    let (limits, now) = (d.limits(which).unwrap_or(&[]), d.now);
+    let rows: Vec<&Limit> = limits.iter().take(2).collect();
     // columns fit their widest text, so the 10 DIP floor never cuts a label short
-    let rows = [Window::Session, Window::Weekly];
     let f = font(k, 10.0);
     let label_w = rows
         .iter()
-        .map(|r| g.measure(r.label(), f, 600))
+        .map(|r| g.measure(r.window.short(), f, 600))
         .fold(0.0, f32::max)
         + 4.0 * k;
     let (pct_w, reset_w, sp) = (
@@ -1051,13 +1058,10 @@ fn ai(
     let pct_x = x + w - 6.0 * k - pct_w;
     let reset_x = pct_x - sp - reset_w;
     let (bx, bw) = (lx + label_w, (reset_x - sp - lx - label_w).max(0.0));
-    for (row, window) in rows.into_iter().enumerate() {
-        let Some(l) = limits.iter().find(|l| l.window == window) else {
-            continue;
-        };
+    for (row, l) in rows.into_iter().enumerate() {
         let (ry, rh) = (y + 6.0 * k + row as f32 * 18.0 * k, 16.0 * k);
         g.text(
-            window.label(),
+            l.window.short(),
             lx,
             ry,
             label_w,
@@ -1106,6 +1110,16 @@ fn ai(
 }
 
 impl Data {
+    /// What an AI limits panel shows. None until its source has answered.
+    pub fn limits(&self, p: Panel) -> Option<&[Limit]> {
+        match p {
+            Panel::Claude => self.claude.as_deref(),
+            Panel::Codex => self.codex.as_deref(),
+            Panel::Antigravity => self.antigravity.as_deref(),
+            _ => None,
+        }
+    }
+
     /// Whether the radio, VPN, airplane mode or hotspot behind `act` is on. None when it
     /// can't be told.
     pub fn radio(&self, act: Action) -> Option<bool> {

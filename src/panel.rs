@@ -65,9 +65,27 @@ impl State {
 }
 
 fn limits(kind: Panel, d: &Data) -> &[Limit] {
+    d.limits(kind).unwrap_or(&[])
+}
+
+/// An AI panel's name, what to do when it has nothing, and where its numbers come from.
+fn ai_text(kind: Panel) -> (&'static str, &'static str, &'static str) {
     match kind {
-        Panel::Claude => d.claude.as_deref().unwrap_or(&[]),
-        _ => d.codex.as_deref().unwrap_or(&[]),
+        Panel::Claude => (
+            "Claude",
+            "Sign in to Claude Code on this PC.",
+            "From Claude Code's sign-in on this PC",
+        ),
+        Panel::Antigravity => (
+            "Antigravity",
+            "Sign in to the Antigravity CLI (agy) on this PC.",
+            "From the agy CLI's sign-in, Gemini models first",
+        ),
+        _ => (
+            "Codex",
+            "Run Codex CLI once on this PC.",
+            "From Codex CLI's session logs",
+        ),
     }
 }
 
@@ -113,7 +131,7 @@ pub fn size(kind: Panel, d: &Data) -> (f32, f32) {
         ),
         Panel::Calendar => (660.0, 470.0),
         Panel::Weather => (320.0, 404.0),
-        Panel::Claude | Panel::Codex => (
+        Panel::Claude | Panel::Codex | Panel::Antigravity => (
             300.0,
             AI_TOP + limits(kind, d).len().max(1) as f32 * AI_ROW + AI_SOURCE,
         ),
@@ -144,7 +162,7 @@ pub fn draw(g: &Gfx, st: &State, d: &Data, s: &Settings, w: f32, h: f32) -> Vec<
     match st.kind {
         Panel::Calendar => calendar(g, &p, st, d, accent, link, s.clock24, w, h, &mut hits),
         Panel::Weather => weather(g, &p, d, w),
-        Panel::Claude | Panel::Codex => ai(g, &p, st.kind, d, w, h),
+        Panel::Claude | Panel::Codex | Panel::Antigravity => ai(g, &p, st.kind, d, w, h),
         Panel::Controls => controls(g, &p, st, d, accent, link, w, h, &mut hits),
         Panel::About => about(g, &p, st, d, accent, link, w, h, &mut hits),
         Panel::Tray => tray(g, &p, st, d, w, h, &mut hits),
@@ -569,11 +587,7 @@ fn weather(g: &Gfx, p: &Pal, d: &Data, w: f32) {
 }
 
 fn ai(g: &Gfx, p: &Pal, kind: Panel, d: &Data, w: f32, h: f32) {
-    let name = if kind == Panel::Claude {
-        "Claude"
-    } else {
-        "Codex"
-    };
+    let (name, hint, src) = ai_text(kind);
     ai_logo(g, kind, 22.0, 18.0, 34.0);
     g.text(
         name,
@@ -599,11 +613,6 @@ fn ai(g: &Gfx, p: &Pal, kind: Panel, d: &Data, w: f32, h: f32) {
     );
     let rows = limits(kind, d);
     if rows.is_empty() {
-        let hint = if kind == Panel::Claude {
-            "Sign in to Claude Code on this PC."
-        } else {
-            "Run Codex CLI once on this PC."
-        };
         g.text(
             hint,
             22.0,
@@ -664,11 +673,6 @@ fn ai(g: &Gfx, p: &Pal, kind: Panel, d: &Data, w: f32, h: f32) {
             Align::Left,
         );
     }
-    let src = if kind == Panel::Claude {
-        "From Claude Code's sign-in on this PC"
-    } else {
-        "From Codex CLI's session logs"
-    };
     g.text(
         src,
         22.0,
@@ -1036,8 +1040,8 @@ fn about(
         "Rust and Direct2D, no browser engine inside.",
         "",
         "Weather from Open-Meteo, updates from GitHub.",
-        "Claude and Codex limits are read from their",
-        "apps on this PC.",
+        "AI plan limits are read from the sign-ins their",
+        "apps keep on this PC.",
     ];
     for (i, l) in lines.iter().enumerate() {
         g.text(

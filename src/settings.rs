@@ -173,11 +173,12 @@ pub enum Widget {
     Network,
     Theme,
     Progress,
+    Antigravity,
 }
 
 impl Widget {
     /// In the order the settings window lists them.
-    pub const ALL: [Widget; 18] = [
+    pub const ALL: [Widget; 19] = [
         Widget::Weather,
         Widget::Media,
         Widget::System,
@@ -185,6 +186,7 @@ impl Widget {
         Widget::Apps,
         Widget::Claude,
         Widget::Codex,
+        Widget::Antigravity,
         Widget::Controls,
         Widget::Battery,
         Widget::Tray,
@@ -219,6 +221,7 @@ impl Widget {
             Widget::Network => "network",
             Widget::Theme => "theme",
             Widget::Progress => "progress",
+            Widget::Antigravity => "antigravity",
         }
     }
 
@@ -242,6 +245,7 @@ impl Widget {
             Widget::Network => "Network speed",
             Widget::Theme => "Light and dark",
             Widget::Progress => "Day, month, year",
+            Widget::Antigravity => "Antigravity limits",
         }
     }
 

@@ -16,6 +16,7 @@ Not really. This is an experimental project that would unlikely to be maintained
 - **Weather** (`weather`): condition, city and temperature on a blue tile.
 - **Clock** (`clock`): It's a clock, what more to say about it.
 - **Claude** (`claude`) and **Codex** (`codex`): session and weekly plan limits with time to reset.
+- **Antigravity** (`antigravity`): Gemini's session and weekly limits on your Google AI plan, plus the pool for Claude and GPT models, read from the sign-in the Antigravity CLI (`agy`) keeps on this PC.
 - **Quick controls** (`controls`): pick its buttons in Settings: Wi-Fi, Bluetooth, VPN, airplane mode, mobile hotspot, volume (click the bar, or scroll anywhere on the tile) and battery. The rest of the tile opens a panel with every app's own volume too.
 - **Hidden icons** (`tray`): a chevron that opens the notification-area icons in a grid above it.
 - **Show desktop** (`desktop`): minimises everything, or brings it back (Win+D).

@@ -1,4 +1,4 @@
-//! Claude and Codex plan limits.
+//! AI plan limits: Claude, Codex and Antigravity.
 use crate::dates::iso_to_unix;
 use serde_json::Value;
 
@@ -9,11 +9,29 @@ pub enum Window {
     Weekly,
     Opus,
     Sonnet,
+    /// Antigravity's pool for the models that aren't Gemini.
+    OtherSession,
+    OtherWeekly,
 }
 
 impl Window {
     pub fn label(self) -> &'static str {
-        ["Session", "Weekly", "Opus", "Sonnet"][self as usize]
+        [
+            "Session",
+            "Weekly",
+            "Opus",
+            "Sonnet",
+            "Claude and GPT, session",
+            "Claude and GPT, weekly",
+        ][self as usize]
+    }
+
+    /// The label on the bar, where there's only room for a word.
+    pub fn short(self) -> &'static str {
+        match self {
+            Window::OtherSession | Window::OtherWeekly => "Others",
+            w => w.label(),
+        }
     }
 }
 
@@ -160,16 +178,116 @@ pub fn parse_codex_line(line: &str) -> Option<Vec<Limit>> {
     (!out.is_empty()).then_some(out)
 }
 
+/// Antigravity's `retrieveUserQuotaSummary`: groups of buckets like `gemini-5h` and
+/// `3p-weekly`, each with the fraction left. Gemini first, then each session before its week.
+pub fn parse_antigravity(body: &str) -> Option<Vec<Limit>> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let mut out: Vec<Limit> = v["groups"]
+        .as_array()?
+        .iter()
+        .flat_map(|g| g["buckets"].as_array().into_iter().flatten())
+        .filter(|b| b["disabled"].as_bool() != Some(true))
+        .filter_map(|b| {
+            let id = b["bucketId"].as_str().unwrap_or("");
+            let five = id.ends_with("5h") || b["window"].as_str() == Some("5h");
+            let window = match (id.starts_with("gemini"), five) {
+                (true, true) => Window::Session,
+                (true, false) => Window::Weekly,
+                (false, true) => Window::OtherSession,
+                (false, false) => Window::OtherWeekly,
+            };
+            let left = b["remainingFraction"].as_f64()?;
+            Some(Limit {
+                window,
+                pct: ((1.0 - left) * 100.0).clamp(0.0, 100.0) as f32,
+                resets: b["resetTime"].as_str().and_then(iso_to_unix),
+            })
+        })
+        .collect();
+    out.sort_by_key(|l| l.window as usize);
+    out.dedup_by_key(|l| l.window);
+    (!out.is_empty()).then_some(out)
+}
+
+/// (access token, refresh token, unix expiry) from the agy CLI's stored sign-in:
+/// `{"token": {"access_token", "refresh_token", "expiry"}}`.
+pub fn parse_agy_token(blob: &str) -> Option<(String, String, i64)> {
+    let v: Value = serde_json::from_str(blob).ok()?;
+    let t = if v["token"].is_object() {
+        &v["token"]
+    } else {
+        &v
+    };
+    Some((
+        t["access_token"].as_str().unwrap_or("").to_string(),
+        t["refresh_token"].as_str()?.to_string(),
+        t["expiry"].as_str().and_then(iso_to_unix).unwrap_or(0),
+    ))
+}
+
+/// The Google Cloud project `loadCodeAssist` assigns, which the quota call asks about.
+pub fn code_assist_project(body: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let p = &v["cloudaicompanionProject"];
+    p.as_str().or(p["id"].as_str()).map(String::from)
+}
+
+/// Every pairing of the OAuth client IDs and secrets compiled into a program. agy keeps its
+/// own in its executable, and refreshing its sign-in needs the matching pair.
+pub fn oauth_clients(bin: &[u8]) -> Vec<(String, String)> {
+    let find_all = |needle: &[u8]| -> Vec<usize> {
+        bin.windows(needle.len())
+            .enumerate()
+            .filter(|(_, w)| *w == needle)
+            .map(|(i, _)| i)
+            .collect()
+    };
+    let mut ids: Vec<String> = vec![];
+    for end in find_all(b".apps.googleusercontent.com") {
+        let start = bin[..end]
+            .iter()
+            .rposition(|c| !(c.is_ascii_digit() || c.is_ascii_lowercase() || *c == b'-'))
+            .map_or(0, |i| i + 1);
+        let id = String::from_utf8_lossy(&bin[start..end]).into_owned();
+        let ok = id.split_once('-').is_some_and(|(num, rest)| {
+            num.len() >= 10 && num.bytes().all(|c| c.is_ascii_digit()) && rest.len() >= 16
+        });
+        let id = format!("{id}.apps.googleusercontent.com");
+        if ok && !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    let mut secrets: Vec<String> = vec![];
+    for at in find_all(b"GOCSPX-") {
+        let tail = &bin[at..(at + 35).min(bin.len())];
+        let ok = tail.len() == 35
+            && tail[7..]
+                .iter()
+                .all(|c| c.is_ascii_alphanumeric() || *c == b'_' || *c == b'-');
+        let s = String::from_utf8_lossy(tail).into_owned();
+        if ok && !secrets.contains(&s) {
+            secrets.push(s);
+        }
+    }
+    ids.iter()
+        .flat_map(|i| secrets.iter().map(move |s| (i.clone(), s.clone())))
+        .collect()
+}
+
 #[cfg(windows)]
 pub use win::*;
 
 #[cfg(windows)]
 mod win {
     use crate::dates::unix_now;
-    use crate::http::{curl, curl_json};
-    use crate::limits::{apply_claude_refresh, claude_refresh_body, Limit, CLAUDE_TOKEN_URL};
+    use crate::http::{curl, curl_form, curl_json, curl_post, pct};
+    use crate::limits::{
+        apply_claude_refresh, claude_refresh_body, code_assist_project, oauth_clients,
+        parse_agy_token, parse_antigravity, Limit, CLAUDE_TOKEN_URL,
+    };
     use serde_json::Value;
     use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
 
     fn home() -> PathBuf {
         std::env::var("USERPROFILE").unwrap_or_default().into()
@@ -188,9 +306,14 @@ mod win {
         }
 
         fn read(part: &str) -> Option<Vec<u8>> {
+            read_generic(&target(part))
+        }
+
+        /// A generic credential's secret, as stored.
+        pub fn read_generic(target: &HSTRING) -> Option<Vec<u8>> {
             let mut c: *mut CREDENTIALW = std::ptr::null_mut();
             unsafe {
-                CredReadW(&target(part), CRED_TYPE_GENERIC, 0, &mut c).ok()?;
+                CredReadW(target, CRED_TYPE_GENERIC, 0, &mut c).ok()?;
                 let r = &*c;
                 let blob = if r.CredentialBlob.is_null() {
                     vec![]
@@ -383,6 +506,82 @@ mod win {
         )?)
     }
 
+    /// Antigravity's access token and when it expires, and the OAuth client that refreshed it.
+    /// ponytail: a refreshed token stays in memory, not written back for agy; Google keeps a
+    /// desktop app's refresh token, so agy's own copy keeps working.
+    static AGY: Mutex<Option<(String, i64)>> = Mutex::new(None);
+    static AGY_CLIENT: Mutex<Option<(String, String)>> = Mutex::new(None);
+    static AGY_PROJECT: Mutex<Option<String>> = Mutex::new(None);
+
+    /// agy.exe where its installer puts it, else on PATH.
+    fn agy_exe() -> Option<PathBuf> {
+        let local =
+            std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join(r"agy\bin\agy.exe"));
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        local
+            .into_iter()
+            .chain(std::env::split_paths(&path).map(|d| d.join("agy.exe")))
+            .find(|p| p.is_file())
+    }
+
+    fn agy_token() -> Option<String> {
+        let now = unix_now();
+        let cached = AGY.lock().unwrap().clone().filter(|a| a.1 > now + 60);
+        if let Some((t, _)) = cached {
+            return Some(t);
+        }
+        let blob = credman::read_generic(&windows::core::HSTRING::from("gemini:antigravity"))?;
+        let (access, refresh, exp) = parse_agy_token(&String::from_utf8(blob).ok()?)?;
+        if exp > now + 60 && !access.is_empty() {
+            *AGY.lock().unwrap() = Some((access.clone(), exp));
+            return Some(access);
+        }
+        let known = AGY_CLIENT.lock().unwrap().clone();
+        let clients = match known {
+            Some(c) => vec![c],
+            None => oauth_clients(&std::fs::read(agy_exe()?).ok()?),
+        };
+        for (id, secret) in clients {
+            let form = format!(
+                "grant_type=refresh_token&refresh_token={}&client_id={}&client_secret={}",
+                pct(&refresh),
+                pct(&id),
+                pct(&secret)
+            );
+            let Some((t, _, expires)) = curl_form("https://oauth2.googleapis.com/token", &form)
+                .and_then(|b| crate::google::parse_token(&b))
+            else {
+                continue;
+            };
+            *AGY_CLIENT.lock().unwrap() = Some((id, secret));
+            *AGY.lock().unwrap() = Some((t.clone(), now + expires));
+            return Some(t);
+        }
+        None
+    }
+
+    /// Antigravity's plan limits, from the sign-in its CLI (agy) keeps in Credential Manager.
+    /// The token only goes to Google.
+    pub fn antigravity_limits() -> Option<Vec<Limit>> {
+        let token = agy_token()?;
+        let headers = format!("Authorization: Bearer {token}\r\nUser-Agent: antigravity\r\n");
+        let known = AGY_PROJECT.lock().unwrap().clone();
+        let project = match known {
+            Some(p) => p,
+            None => {
+                let meta = r#"{"metadata":{"ideType":"ANTIGRAVITY","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}}"#;
+                let url = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
+                let p = code_assist_project(&curl_post(url, &headers, meta)?)?;
+                *AGY_PROJECT.lock().unwrap() = Some(p.clone());
+                p
+            }
+        };
+        let body = serde_json::json!({ "project": project }).to_string();
+        // the daily host has the live numbers; the other one can lag at 100% left
+        let url = "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
+        parse_antigravity(&curl_post(url, &headers, &body)?)
+    }
+
     /// Codex CLI writes its rate limits into the session logs, so this reads the newest one.
     /// No network.
     pub fn codex_limits() -> Option<Vec<Limit>> {
@@ -491,5 +690,55 @@ mod tests {
             (Window::Weekly, Some(1763900000))
         );
         assert_eq!(parse_codex_line(r#"{"type":"message"}"#), None);
+    }
+
+    #[test]
+    fn antigravity_quota() {
+        let b = r#"{"description":"","groups":[
+            {"displayName":"Claude and GPT models","buckets":[
+                {"bucketId":"3p-weekly","window":"weekly","remainingFraction":0.9,"resetTime":"2026-11-20T00:00:00Z"},
+                {"bucketId":"3p-5h","window":"5h","remainingFraction":1.0,"disabled":true}]},
+            {"displayName":"Gemini Models","buckets":[
+                {"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.8127},
+                {"bucketId":"gemini-5h","window":"5h","remainingFraction":0.2725,"resetTime":"2026-11-18T15:00:00Z"}]}]}"#;
+        let l = parse_antigravity(b).unwrap();
+        let w: Vec<Window> = l.iter().map(|l| l.window).collect();
+        assert_eq!(w, [Window::Session, Window::Weekly, Window::OtherWeekly]);
+        assert!((l[0].pct - 72.75).abs() < 0.01);
+        assert_eq!(l[0].resets, iso_to_unix("2026-11-18T15:00:00Z"));
+        assert_eq!(parse_antigravity(r#"{"groups":[]}"#), None);
+
+        let blob = r#"{"token":{"access_token":"ya29.a","token_type":"Bearer","refresh_token":"1//r","expiry":"2026-11-18T12:00:00.5+07:00"},"auth_method":"consumer"}"#;
+        assert_eq!(
+            parse_agy_token(blob),
+            Some((
+                "ya29.a".into(),
+                "1//r".into(),
+                iso_to_unix("2026-11-18T05:00:00Z").unwrap()
+            ))
+        );
+        assert_eq!(parse_agy_token(r#"{"token":{}}"#), None);
+        assert_eq!(
+            code_assist_project(r#"{"cloudaicompanionProject":"p-1"}"#).as_deref(),
+            Some("p-1")
+        );
+        assert_eq!(
+            code_assist_project(r#"{"cloudaicompanionProject":{"id":"p-2"}}"#).as_deref(),
+            Some("p-2")
+        );
+    }
+
+    #[test]
+    fn oauth_clients_in_a_binary() {
+        // made-up values, put together here so they don't read as real credentials
+        let host = "googleusercontent";
+        let id = format!(
+            "{}-{}.apps.{host}.com",
+            "1234567890", "abcdefghijklmnop0123"
+        );
+        let secret = format!("{}-{}", "GOCSPX", "abcdefghijklmnopqrstuvwxyz12");
+        let mut bin = format!("\x00junk-12345.apps.{host}.com\x00\x01{id}\x00").into_bytes();
+        bin.extend(format!("{secret}\x00{}-short\x00", "GOCSPX").bytes());
+        assert_eq!(oauth_clients(&bin), [(id, secret)]);
     }
 }

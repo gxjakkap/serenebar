@@ -805,6 +805,7 @@ impl App {
         let f = feeds::snapshot();
         (self.d.weather, self.d.events, self.d.claude, self.d.codex) =
             (f.weather, f.events, f.claude, f.codex);
+        self.d.antigravity = f.antigravity;
         (self.d.update, self.d.update_note, self.installer) =
             (f.update, f.update_note, f.installer);
         self.d.weather_w = self.d.weather.as_ref().map_or(0.0, |wx| {
