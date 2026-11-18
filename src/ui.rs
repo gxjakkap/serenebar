@@ -230,6 +230,7 @@ pub struct Data {
     pub app_volumes: Vec<crate::controls::AppVolume>, // read only while the controls panel is open
     pub mic: Option<bool>,                            // muted; None without a microphone
     pub net: Option<(f64, f64)>,                      // bytes per second down and up
+    pub theme_swap: Option<std::time::Instant>,       // when the light/dark button was last clicked
     pub light: Option<bool>,                          // Windows apps are in light mode
     pub wifi: Option<bool>,
     pub vpn: Option<bool>,
@@ -629,7 +630,7 @@ pub fn draw_tiles(g: &Gfx, v: &View, d: &Data, full_w: Option<f32>) -> Vec<Hit<A
                 Widget::Battery => battery(g, v, d, x, y, w, h),
                 Widget::Mic => mic(g, v, d, x, y, w, h, &mut hits),
                 Widget::Network => network(g, v, d, x, y, w, h, &mut hits),
-                Widget::Theme => theme_toggle(g, v, x, y, w, h, &mut hits),
+                Widget::Theme => theme_toggle(g, v, d, x, y, w, h, &mut hits),
                 Widget::Progress => progress(g, v, d, x, y, w, h, &mut hits),
                 Widget::DeepSeek => deepseek(g, v, d, x, y, w, h, &mut hits),
                 Widget::Gmail => gmail(g, v, d, x, y, w, h, &mut hits),
@@ -2014,19 +2015,107 @@ fn network(
     hits.push((x, y, w, h, Action::TaskManager));
 }
 
-/// A circle, half filled: switches Windows between light and dark mode.
-fn theme_toggle(g: &Gfx, v: &View, x: f32, y: f32, w: f32, h: f32, hits: &mut Vec<Hit<Action>>) {
+/// How long the sun and moon take to swap.
+pub const THEME_SWAP: f32 = 0.45;
+
+/// A sun: a disc with eight short rays.
+fn sun_glyph(g: &Gfx, cx: f32, cy: f32, s: f32, c: C) {
+    g.fill_circle(cx, cy, s * 0.24, c);
+    for i in 0..8 {
+        let a = i as f32 * PI / 4.0;
+        let (sa, ca) = (a.sin(), a.cos());
+        g.line(
+            cx + sa * s * 0.38,
+            cy - ca * s * 0.38,
+            cx + sa * s * 0.5,
+            cy - ca * s * 0.5,
+            c,
+            s * 0.1,
+        );
+    }
+}
+
+/// A crescent moon: a disc with a smaller one bitten out of its upper right.
+fn moon_glyph(g: &Gfx, cx: f32, cy: f32, s: f32, c: C) {
+    let (big, small) = (s * 0.46, s * 0.38);
+    let (dx, dy) = (s * 0.26, -s * 0.2); // the bite's centre, from the disc's
+    let d = (dx * dx + dy * dy).sqrt();
+    let toward = dy.atan2(dx);
+    // where the two circles cross, as angles from each centre
+    let a = ((big * big + d * d - small * small) / (2.0 * big * d))
+        .clamp(-1.0, 1.0)
+        .acos();
+    let b = ((small * small + d * d - big * big) / (2.0 * small * d))
+        .clamp(-1.0, 1.0)
+        .acos();
+    let n = 24;
+    let arc = |ox: f32, oy: f32, r: f32, from: f32, to: f32| {
+        (0..=n).map(move |i| {
+            let t = from + (to - from) * i as f32 / n as f32;
+            (ox + r * t.cos(), oy + r * t.sin())
+        })
+    };
+    // the disc's edge the long way round, outside the bite, then back along the bite's edge
+    let mut pts: Vec<(f32, f32)> = arc(cx, cy, big, toward + a, toward + 2.0 * PI - a).collect();
+    let mut bite: Vec<(f32, f32)> =
+        arc(cx + dx, cy + dy, small, toward + PI - b, toward + PI + b).collect();
+    let last = *pts.last().unwrap();
+    let dist = |p: (f32, f32)| (p.0 - last.0).powi(2) + (p.1 - last.1).powi(2);
+    if dist(bite[0]) > dist(*bite.last().unwrap()) {
+        bite.reverse();
+    }
+    pts.extend(bite);
+    g.poly(&pts, c);
+}
+
+/// A sun in light mode, a moon in dark mode. Switching spins the old one out and the new one in.
+fn theme_toggle(
+    g: &Gfx,
+    v: &View,
+    d: &Data,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hits: &mut Vec<Hit<Action>>,
+) {
     let k = v.m.k;
     hover_backing(g, v, Action::Theme, x, y, w, h);
-    let (cx, cy, r) = (x + w / 2.0, y + h / 2.0, 6.5 * k);
-    g.arc(cx, cy, r, 1.0, v.th.text, 1.4 * k);
-    let half: Vec<(f32, f32)> = (0..=16)
-        .map(|i| {
-            let a = PI + i as f32 * PI / 16.0; // the left half, bottom to top
-            (cx + r * a.sin(), cy - r * a.cos())
-        })
-        .collect();
-    g.poly(&half, v.th.text);
+    let (cx, cy, s) = (x + w / 2.0, y + h / 2.0, 15.0 * k);
+    let light = d.light != Some(false);
+    let p = d
+        .theme_swap
+        .map_or(1.0, |t| (t.elapsed().as_secs_f32() / THEME_SWAP).min(1.0));
+    let draw = |is_light: bool, scale: f32, turn: f32| {
+        if scale <= 0.01 {
+            return;
+        }
+        // spin and scale about the icon, inside the bar
+        let (sin, cos) = (turn.sin() * scale, turn.cos() * scale);
+        g.set_transform(Matrix3x2 {
+            M11: cos,
+            M12: sin,
+            M21: -sin,
+            M22: cos,
+            M31: cx - cx * cos + cy * sin + v.bar_x,
+            M32: cy - cx * sin - cy * cos + v.bar_y,
+        });
+        if is_light {
+            sun_glyph(g, cx, cy, s, v.th.text)
+        } else {
+            moon_glyph(g, cx, cy, s, v.th.text)
+        }
+    };
+    if p < 1.0 {
+        let out = 1.0 - (p * 2.0).min(1.0);
+        draw(!light, out, p * PI / 2.0);
+        draw(light, ease_out_back(p), (p - 1.0) * PI / 2.0);
+        g.set_transform(about(1.0, 0.0, 0.0, v));
+    } else if light {
+        sun_glyph(g, cx, cy, s, v.th.text)
+    } else {
+        moon_glyph(g, cx, cy, s, v.th.text)
+    }
     hits.push((x, y, w, h, Action::Theme));
 }
 

@@ -27,7 +27,7 @@ Tiles with more than one look have a size chip on their row in Settings › Widg
 - **Show desktop** (`desktop`): minimises everything, or brings it back (Win+D).
 - **Notifications** (`notifications`): a bell that opens the notification centre (Win+N).
 - **Network speed** (`network`): download and upload speed of the network adapters. Clicking it opens Task Manager.
-- **Light and dark** (`theme`): switches Windows apps and the taskbar between light and dark mode.
+- **Light and dark** (`theme`): a sun in light mode and a moon in dark mode. Clicking it switches Windows apps and the taskbar over, and the two spin round as they swap.
 - **Day, month, year** (`progress`): how much of today, this month and this year has gone by, as three rings.
 - **Mute and deafen** (`mic`): two buttons, lit red while on: mute every microphone, and mute the speakers.
 - **Input language** (`lang`): the keyboard layout of the window in front, like ENG / US. Clicking it opens Windows' language switcher (Win+Space).

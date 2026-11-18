@@ -933,6 +933,13 @@ impl App {
             moving |= b.anim_step(&self.s, &self.d, self.started);
         }
         self.align_start();
+        if self
+            .d
+            .theme_swap
+            .is_some_and(|t| t.elapsed().as_secs_f32() < ui::THEME_SWAP + 0.05)
+        {
+            moving = true;
+        }
         if self.panel.as_ref().is_some_and(|p| still_opening(p.opened)) {
             moving = true;
             self.draw_panel();
@@ -1010,7 +1017,11 @@ impl App {
                 }
             }
             Action::AppVolume(_) => {} // dragged in the panel
-            Action::Theme => system::toggle_theme(),
+            Action::Theme => {
+                system::toggle_theme();
+                self.d.theme_swap = Some(Instant::now());
+                self.animate();
+            }
             Action::Volume => {
                 self.set_volume(frac);
                 return;
