@@ -192,12 +192,18 @@ pub fn parse_antigravity(body: &str) -> Option<Vec<Limit>> {
     let mut out: Vec<Limit> = v["groups"]
         .as_array()?
         .iter()
-        .flat_map(|g| g["buckets"].as_array().into_iter().flatten())
-        .filter(|b| b["disabled"].as_bool() != Some(true))
-        .filter_map(|b| {
+        .flat_map(|g| {
+            // bucket ids differ between plans, so the group's name says which pool it is
+            let name = g["displayName"].as_str().unwrap_or("").to_lowercase();
+            let buckets = g["buckets"].as_array().into_iter().flatten();
+            buckets.map(move |b| (name.contains("gemini"), b))
+        })
+        .filter(|(_, b)| b["disabled"].as_bool() != Some(true))
+        .filter_map(|(in_gemini, b)| {
             let id = b["bucketId"].as_str().unwrap_or("");
+            let gemini = in_gemini || id.starts_with("gemini");
             let five = id.ends_with("5h") || b["window"].as_str() == Some("5h");
-            let window = match (id.starts_with("gemini"), five) {
+            let window = match (gemini, five) {
                 (true, true) => Window::Session,
                 (true, false) => Window::Weekly,
                 (false, true) => Window::OtherSession,
@@ -211,7 +217,12 @@ pub fn parse_antigravity(body: &str) -> Option<Vec<Limit>> {
             })
         })
         .collect();
-    out.sort_by_key(|l| l.window as usize);
+    // the fullest of any two buckets in one window, so a busy one is never hidden
+    out.sort_by(|a, b| {
+        (a.window as usize)
+            .cmp(&(b.window as usize))
+            .then(b.pct.total_cmp(&a.pct))
+    });
     out.dedup_by_key(|l| l.window);
     (!out.is_empty()).then_some(out)
 }
@@ -870,6 +881,17 @@ mod tests {
         assert!((l[0].pct - 72.75).abs() < 0.01);
         assert_eq!(l[0].resets, iso_to_unix("2026-11-18T15:00:00Z"));
         assert_eq!(parse_antigravity(r#"{"groups":[]}"#), None);
+        // a Starter plan: weekly windows only, and Gemini's bucket named for the plan
+        let starter = r#"{"groups":[
+            {"displayName":"Gemini Models","buckets":[{"bucketId":"starter-weekly","window":"weekly","remainingFraction":0.95}]},
+            {"displayName":"Claude and GPT models","buckets":[{"bucketId":"3p-weekly","window":"weekly","remainingFraction":1.0}]}]}"#;
+        let l = parse_antigravity(starter).unwrap();
+        assert_eq!(
+            l.iter()
+                .map(|l| (l.window, l.pct.round()))
+                .collect::<Vec<_>>(),
+            [(Window::Weekly, 5.0), (Window::OtherWeekly, 0.0)]
+        );
 
         let blob = r#"{"token":{"access_token":"ya29.a","token_type":"Bearer","refresh_token":"1//r","expiry":"2026-11-18T12:00:00.5+07:00"},"auth_method":"consumer"}"#;
         assert_eq!(
