@@ -977,6 +977,46 @@ impl Gfx {
         }
     }
 
+    /// Decodes a PNG, JPEG or the like, such as an album cover.
+    pub fn bitmap_from_bytes(&self, bytes: &[u8]) -> Option<ID2D1Bitmap1> {
+        unsafe {
+            let stream = self.wic.CreateStream().ok()?;
+            stream.InitializeFromMemory(bytes).ok()?;
+            let dec = self
+                .wic
+                .CreateDecoderFromStream(&stream, std::ptr::null(), WICDecodeMetadataCacheOnDemand)
+                .ok()?;
+            self.bitmap_from_wic(&dec.GetFrame(0).ok()?.cast().ok()?)
+        }
+    }
+
+    /// `b` stretched over a rounded rectangle, its corners cut to the radius.
+    pub fn bitmap_rr(&self, b: &ID2D1Bitmap1, x: f32, y: f32, w: f32, h: f32, r: f32) {
+        unsafe {
+            let props = D2D1_BITMAP_BRUSH_PROPERTIES1 {
+                extendModeX: D2D1_EXTEND_MODE_CLAMP,
+                extendModeY: D2D1_EXTEND_MODE_CLAMP,
+                interpolationMode: D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+            };
+            let Ok(brush) = self.dc.CreateBitmapBrush(b, Some(&props), None) else {
+                return;
+            };
+            let size = b.GetSize();
+            if size.width <= 0.0 || size.height <= 0.0 {
+                return;
+            }
+            brush.SetTransform(&Matrix3x2 {
+                M11: w / size.width,
+                M12: 0.0,
+                M21: 0.0,
+                M22: h / size.height,
+                M31: x,
+                M32: y,
+            });
+            self.dc.FillRoundedRectangle(&rr(x, y, w, h, r), &brush);
+        }
+    }
+
     /// Average colour of an encoded image, for tinting the music tile after its cover.
     pub fn average_color(&self, bytes: &[u8]) -> Option<C> {
         unsafe {

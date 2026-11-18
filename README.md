@@ -14,7 +14,7 @@ Tiles with more than one look have a size chip on their row in Settings › Widg
 
 - **Start** (`start`): the Windows 11 Start logo
 - **Apps** (`apps`): the dock's pinned apps, then other open apps in the order they opened
-- **Music** (`media`): a pill tinted with the album art's colour, with "Title · Artist" and prev/play/next.
+- **Music** (`media`): a pill tinted with the album art's colour, with "Title · Artist" and prev/play/next. Extra large shows the cover, the track over a progress bar, play and skip; Medium the cover, the track and play; Small one play button with the track's progress round it.
 - **Weather** (`weather`): condition, city and temperature on a blue tile.
 - **Clock** (`clock`): It's a clock, what more to say about it. Large has seconds and the date, Small only the time, and Tear-off is the red calendar-page clock.
 - **Date** (`date`): the weekday over the day and month, or, as Day number, a calendar page with the weekday in red over the day.

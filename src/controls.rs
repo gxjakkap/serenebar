@@ -42,6 +42,9 @@ pub struct Media {
     pub artist: String,
     pub playing: bool,
     pub art_id: u64, // goes up by one when the cover changes
+    /// Seconds into the track and its length, 0 when the player doesn't say.
+    pub position: f64,
+    pub length: f64,
 }
 
 pub enum Cmd {
@@ -150,12 +153,35 @@ fn read_media(
                 .map(Arc::new),
         );
     }
+    let (position, length) = s
+        .GetTimelineProperties()
+        .and_then(|t| Ok((t.Position()?, t.EndTime()?, t.LastUpdatedTime()?)))
+        .map_or((0.0, 0.0), |(pos, end, at)| {
+            // the player reports where it was when it last said so; it has played on since
+            let since = if playing {
+                (filetime_now() - at.UniversalTime).max(0) as f64 / 1e7
+            } else {
+                0.0
+            };
+            let length = end.Duration as f64 / 1e7;
+            ((pos.Duration as f64 / 1e7 + since).min(length), length)
+        });
     Ok(Media {
         title,
         artist,
         playing,
         art_id: *art_id,
+        position,
+        length,
     })
+}
+
+/// Now, in the 100 ns units since 1601 that WinRT's DateTime counts.
+fn filetime_now() -> i64 {
+    let unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as i64 / 100);
+    unix + 116_444_736_000_000_000
 }
 
 fn read_stream(t: &windows::Storage::Streams::IRandomAccessStreamReference) -> Result<Vec<u8>> {

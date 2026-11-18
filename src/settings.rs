@@ -283,6 +283,7 @@ impl Widget {
         use Variant::*;
         match self {
             Widget::Clock => &[Large, Small, TearOff],
+            Widget::Media => &[Large, ExtraLarge, Medium, Small],
             Widget::Date => &[FullDate, DayNumber],
             Widget::Claude | Widget::Codex | Widget::Antigravity | Widget::Cursor => {
                 &[Large, Medium, Small]

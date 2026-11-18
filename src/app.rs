@@ -305,6 +305,10 @@ impl Bar {
     }
 
     fn load_icons(&self, d: &ui::Data) {
+        let art_id = d.media.as_ref().map_or(0, |m| m.art_id);
+        self.g.image("art", art_id, |g| {
+            d.art.as_ref().and_then(|b| g.bitmap_from_bytes(b))
+        });
         let px = ui::icon_px(self.k());
         for a in &d.apps {
             self.g.image(a.key(), px as u64, |g| {
@@ -827,6 +831,7 @@ impl App {
         if id != self.art_id {
             self.art_id = id;
             self.d.art_tint = c.art.as_ref().and_then(|b| self.bars[0].g.average_color(b));
+            self.d.art = c.art.clone();
         }
         (self.d.media, self.d.wifi, self.d.bluetooth, self.d.vpn) =
             (c.media, c.wifi, c.bluetooth, c.vpn);

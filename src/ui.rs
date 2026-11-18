@@ -213,6 +213,7 @@ pub struct Data {
     pub apps: Vec<crate::apps::AppItem>,
     pub media: Option<crate::controls::Media>,
     pub art_tint: Option<C>,
+    pub art: Option<std::sync::Arc<Vec<u8>>>, // the cover, encoded; drawn from each bar's cache as "art"
     pub weather: Option<Weather>,
     pub weather_w: f32, // label/city column plus temperature, measured at scale 1
     pub events: Vec<crate::calendar::Event>,
@@ -359,7 +360,12 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
     Some(match w {
         Widget::Start => icons_w(v, 0..1),
         Widget::Apps if !d.apps.is_empty() => icons_w(v, 1..d.apps.len() + 1),
-        Widget::Media => 196.0 * k,
+        Widget::Media => match v.s.variant(w) {
+            Variant::ExtraLarge => 236.0 * k,
+            Variant::Medium => 184.0 * k,
+            Variant::Small => 46.0 * k,
+            _ => 196.0 * k,
+        },
         Widget::Weather => (WEATHER_PAD + d.weather_w).max(150.0) * k,
         Widget::Date if v.s.variant(w) == Variant::DayNumber => 46.0 * k,
         Widget::Date => 128.0 * k, // room for "September 30"
@@ -593,7 +599,13 @@ pub fn draw_tiles(g: &Gfx, v: &View, d: &Data, full_w: Option<f32>) -> Vec<Hit<A
             match widget {
                 Widget::Start => icons(g, v, d, x, y, h, 0..1, &mut hits),
                 Widget::Apps => icons(g, v, d, x, y, h, 1..d.apps.len() + 1, &mut hits),
-                Widget::Media => media(g, v, d, x, y, w, h, &mut hits),
+                Widget::Media => match v.s.variant(widget) {
+                    Variant::ExtraLarge | Variant::Medium => {
+                        media_card(g, v, d, x, y, w, h, &mut hits)
+                    }
+                    Variant::Small => media_mini(g, v, d, x, y, w, h, &mut hits),
+                    _ => media(g, v, d, x, y, w, h, &mut hits),
+                },
                 Widget::Weather => weather(g, v, d, x, y, w, h, &mut hits),
                 Widget::Date => date(g, v, d, x, y, w, h, &mut hits),
                 Widget::Clock => match v.s.variant(widget) {
@@ -2233,4 +2245,148 @@ fn date(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut 
         );
     }
     hits.push((x, y, w, h, act));
+}
+
+/// How far through the track it is, 0 to 1. 0 when the player gives no length.
+fn track_progress(d: &Data) -> f32 {
+    d.media
+        .as_ref()
+        .filter(|m| m.length > 0.0)
+        .map_or(0.0, |m| (m.position / m.length) as f32)
+        .clamp(0.0, 1.0)
+}
+
+/// The cover, rounded, or a plain square with a note on it when the track has none.
+fn cover(g: &Gfx, v: &View, x: f32, y: f32, s: f32) {
+    let r = s * 0.22;
+    match g.cached("art") {
+        Some(b) => g.bitmap_rr(&b, x, y, s, s, r),
+        None => {
+            g.fill_rr(x, y, s, s, r, v.th.chip);
+            let (cx, cy) = (x + s * 0.44, y + s * 0.64);
+            g.fill_circle(cx, cy, s * 0.1, v.th.sub);
+            g.line(
+                cx + s * 0.09,
+                cy,
+                cx + s * 0.09,
+                y + s * 0.28,
+                v.th.sub,
+                s * 0.05,
+            );
+        }
+    }
+}
+
+/// A round play or pause button.
+fn play_button(g: &Gfx, v: &View, d: &Data, cx: f32, cy: f32, r: f32, hits: &mut Vec<Hit<Action>>) {
+    let playing = d.media.as_ref().is_some_and(|m| m.playing);
+    let mut bg = v.th.chip;
+    if v.hover == Some(Action::Toggle) {
+        bg.a *= 1.8;
+    }
+    g.fill_circle(cx, cy, r, bg);
+    let fade = if d.media.is_some() { 1.0 } else { 0.45 };
+    media_glyph(
+        g,
+        Action::Toggle,
+        playing,
+        cx,
+        cy,
+        r * 0.34,
+        dim(v.th.text, fade),
+    );
+    hits.push((cx - r, cy - r, 2.0 * r, 2.0 * r, Action::Toggle));
+}
+
+/// Extra large: cover, title and artist over a progress bar, play and skip. Medium: cover,
+/// title and artist, and play.
+fn media_card(
+    g: &Gfx,
+    v: &View,
+    d: &Data,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hits: &mut Vec<Hit<Action>>,
+) {
+    let k = v.m.k;
+    let xl = v.s.variant(Widget::Media) == Variant::ExtraLarge;
+    tile(g, v, x, y, w, h, false);
+    let s = h - 12.0 * k;
+    cover(g, v, x + 6.0 * k, y + 6.0 * k, s);
+    let (title, artist) = match &d.media {
+        Some(m) => (m.title.as_str(), m.artist.as_str()),
+        None => ("Nothing playing", ""),
+    };
+    let buttons = if xl { 64.0 } else { 38.0 } * k;
+    let (tx, tw) = (x + s + 14.0 * k, w - s - 14.0 * k - buttons);
+    let ty = if xl { y + 4.0 * k } else { y + 7.0 * k };
+    g.text(
+        title,
+        tx,
+        ty,
+        tw,
+        15.0 * k,
+        font(k, 11.0),
+        700,
+        v.th.text,
+        Align::Left,
+    );
+    g.text(
+        artist,
+        tx,
+        ty + 14.0 * k,
+        tw,
+        14.0 * k,
+        font(k, 10.0),
+        500,
+        v.th.sub,
+        Align::Left,
+    );
+    if xl {
+        let by = y + h - 10.0 * k;
+        g.fill_rr(tx, by, tw, 3.0 * k, 1.5 * k, v.th.chip);
+        g.fill_rr(tx, by, tw * track_progress(d), 3.0 * k, 1.5 * k, v.th.text);
+    }
+    let cy = y + h / 2.0;
+    let play_x = x + w - if xl { 46.0 } else { 22.0 } * k;
+    play_button(g, v, d, play_x, cy, 13.0 * k, hits);
+    if xl {
+        let nx = x + w - 16.0 * k;
+        if v.hover == Some(Action::Next) {
+            g.fill_circle(nx, cy, 11.0 * k, v.th.tile_hover);
+        }
+        let fade = if d.media.is_some() { 1.0 } else { 0.45 };
+        media_glyph(
+            g,
+            Action::Next,
+            false,
+            nx,
+            cy,
+            4.2 * k,
+            dim(v.th.text, fade),
+        );
+        hits.push((nx - 12.0 * k, y, 24.0 * k, h, Action::Next));
+    }
+}
+
+/// Small: one round play button, with the track's progress running round it.
+fn media_mini(
+    g: &Gfx,
+    v: &View,
+    d: &Data,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hits: &mut Vec<Hit<Action>>,
+) {
+    let k = v.m.k;
+    tile(g, v, x, y, w, h, false);
+    let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+    let r = 16.0 * k;
+    g.arc(cx, cy, r, 1.0, v.th.chip, 2.6 * k);
+    g.arc(cx, cy, r, track_progress(d), v.th.text, 2.6 * k);
+    play_button(g, v, d, cx, cy, 12.0 * k, hits);
 }
