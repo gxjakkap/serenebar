@@ -147,6 +147,10 @@ pub fn tip(act: Action, d: &Data) -> Option<String> {
         Action::Toggle => "Play".into(),
         Action::Next => "Next".into(),
         Action::TaskManager => "Task Manager".into(),
+        Action::Mic if d.mic == Some(true) => "Microphone muted".into(),
+        Action::Mic => "Mute microphone".into(),
+        Action::Mute if d.volume.as_ref().is_some_and(|v| v.muted) => "Sound muted".into(),
+        Action::Mute => "Mute sound".into(),
         _ => return None,
     })
 }
@@ -174,7 +178,8 @@ pub enum Action {
     Wifi,
     Bluetooth,
     Vpn,
-    Mute,
+    Mute, // the speakers: deafen
+    Mic,
     Volume,
     Settings,
     Language,
@@ -201,6 +206,7 @@ pub struct Data {
     pub update: Option<crate::update::Release>, // a newer release than this build
     pub update_note: &'static str,              // how a check from Settings went
     pub volume: Option<crate::controls::Volume>,
+    pub mic: Option<bool>, // muted; None without a microphone
     pub wifi: Option<bool>,
     pub vpn: Option<bool>,
     pub lang: Option<(String, String)>,
@@ -344,6 +350,7 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
         Widget::Lang if d.lang.is_some() => 46.0 * k,
         Widget::Tray | Widget::Desktop => 24.0 * k,
         Widget::System => 96.0 * k,
+        Widget::Mic => 68.0 * k,
         Widget::Battery if d.battery.is_some() => 56.0 * k,
         Widget::Apps | Widget::Claude | Widget::Codex | Widget::Lang | Widget::Battery => {
             return None
@@ -574,6 +581,7 @@ pub fn draw_tiles(g: &Gfx, v: &View, d: &Data, full_w: Option<f32>) -> Vec<Hit<A
                 Widget::Desktop => desktop(g, v, x, y, w, h, &mut hits),
                 Widget::System => system(g, v, d, x, y, w, h, &mut hits),
                 Widget::Battery => battery(g, v, d, x, y, w, h),
+                Widget::Mic => mic(g, v, d, x, y, w, h, &mut hits),
             }
         }
     }
@@ -1627,4 +1635,89 @@ fn battery(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32) {
     let label = if charging { "Charging" } else { "Battery" };
     let value = format!("{:.0}", f * 100.0);
     ring(g, v, x + w / 2.0, y, h, f, rgba(c, 1.0), label, &value);
+}
+
+/// A microphone: a capsule on a stand, struck through when muted.
+pub fn mic_glyph(g: &Gfx, cx: f32, cy: f32, s: f32, muted: bool, c: C) {
+    let t = s * 0.09;
+    g.stroke_rr(
+        cx - s * 0.16,
+        cy - s * 0.48,
+        s * 0.32,
+        s * 0.56,
+        s * 0.16,
+        c,
+        t,
+    );
+    g.arc_between(
+        cx,
+        cy - s * 0.12,
+        s * 0.3,
+        PI / 2.0 + 0.15,
+        1.5 * PI - 0.15,
+        c,
+        t,
+    );
+    g.line(cx, cy + s * 0.18, cx, cy + s * 0.42, c, t);
+    if muted {
+        g.line(
+            cx - s * 0.36,
+            cy - s * 0.42,
+            cx + s * 0.36,
+            cy + s * 0.34,
+            c,
+            t,
+        );
+    }
+}
+
+/// Headphones: a band and two ear cups, struck through when the sound is off.
+pub fn headphones_glyph(g: &Gfx, cx: f32, cy: f32, s: f32, muted: bool, c: C) {
+    let t = s * 0.09;
+    g.arc_between(cx, cy + s * 0.04, s * 0.36, -PI / 2.0, PI / 2.0, c, t);
+    for dx in [-1.0, 1.0] {
+        let x = cx + dx * s * 0.36 - s * 0.1;
+        g.fill_rr(x, cy - s * 0.02, s * 0.2, s * 0.38, s * 0.07, c);
+    }
+    if muted {
+        g.line(
+            cx - s * 0.42,
+            cy - s * 0.4,
+            cx + s * 0.42,
+            cy + s * 0.38,
+            c,
+            t,
+        );
+    }
+}
+
+/// Mute the microphone and deafen (mute the speakers), each lit red while it's on.
+fn mic(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut Vec<Hit<Action>>) {
+    let k = v.m.k;
+    tile(g, v, x, y, w, h, false);
+    let (cy, br) = (y + h / 2.0, 13.0 * k);
+    let deaf = d.volume.as_ref().map(|vo| vo.muted);
+    for (i, (act, on)) in [(Action::Mic, d.mic), (Action::Mute, deaf)]
+        .into_iter()
+        .enumerate()
+    {
+        let cx = x + 4.0 * k + (i as f32 + 0.5) * 30.0 * k;
+        let lit = on == Some(true);
+        let red = rgba(0xFF453A, 1.0);
+        let mut bg = if lit { red } else { v.th.chip };
+        if v.hover == Some(act) && !lit {
+            bg.a *= 1.8;
+        }
+        g.fill_circle(cx, cy, br, bg);
+        let fg = dim(
+            if lit { on_fill(red) } else { v.th.text },
+            if on.is_some() { 1.0 } else { 0.35 },
+        );
+        if act == Action::Mic {
+            mic_glyph(g, cx, cy, 15.0 * k, lit, fg)
+        } else {
+            headphones_glyph(g, cx, cy, 15.0 * k, lit, fg)
+        }
+        hits.push((cx - br, cy - br, br * 2.0, br * 2.0, act));
+    }
 }

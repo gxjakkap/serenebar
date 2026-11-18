@@ -318,17 +318,56 @@ pub struct Volume {
     pub name: String,
 }
 
+fn devices() -> Option<windows::Win32::Media::Audio::IMMDeviceEnumerator> {
+    use windows::Win32::Media::Audio::*;
+    unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok() }
+}
+
 fn endpoint() -> Option<(
     windows::Win32::Media::Audio::IMMDevice,
     windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume,
 )> {
     use windows::Win32::Media::Audio::*;
     unsafe {
-        let en: IMMDeviceEnumerator =
-            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
-        let dev = en.GetDefaultAudioEndpoint(eRender, eConsole).ok()?;
+        let dev = devices()?.GetDefaultAudioEndpoint(eRender, eConsole).ok()?;
         let vol = dev.Activate(CLSCTX_ALL, None).ok()?;
         Some((dev, vol))
+    }
+}
+
+/// Whether the microphone calls use (the default communications device) is muted.
+/// None without a microphone.
+pub fn mic_muted() -> Option<bool> {
+    use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
+    use windows::Win32::Media::Audio::*;
+    unsafe {
+        let dev = devices()?
+            .GetDefaultAudioEndpoint(eCapture, eCommunications)
+            .ok()?;
+        let vol: IAudioEndpointVolume = dev.Activate(CLSCTX_ALL, None).ok()?;
+        Some(vol.GetMute().ok()?.as_bool())
+    }
+}
+
+/// Mutes or unmutes every microphone, so apps that picked another one are muted too.
+pub fn toggle_mic() {
+    use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
+    use windows::Win32::Media::Audio::*;
+    let mute = !mic_muted().unwrap_or(true);
+    let Some(list) =
+        devices().and_then(|e| unsafe { e.EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE).ok() })
+    else {
+        return;
+    };
+    unsafe {
+        for i in 0..list.GetCount().unwrap_or(0) {
+            let vol = list
+                .Item(i)
+                .and_then(|d| d.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None));
+            if let Ok(v) = vol {
+                let _ = v.SetMute(mute, std::ptr::null());
+            }
+        }
     }
 }
 
