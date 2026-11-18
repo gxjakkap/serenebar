@@ -9,6 +9,10 @@ serde_json = "1"
 [build-dependencies]
 embed-resource = "3"
 
+[target.'cfg(windows)'.dependencies]
+# for declaring the undocumented airplane-mode interface
+windows-core = "0.58"
+
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.58"
 features = [
@@ -17,6 +21,8 @@ features = [
   "Foundation_Collections",
   "Foundation_Numerics",
   "Media_Control",
+  "Networking_Connectivity",
+  "Networking_NetworkOperators",
   "Storage_Streams",
   "Win32_Devices_FunctionDiscovery",
   "Win32_Foundation",

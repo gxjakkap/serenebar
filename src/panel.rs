@@ -87,7 +87,7 @@ const TRAY_TIP: f32 = 48.0;
 const AI_TOP: f32 = 72.0;
 const AI_ROW: f32 = 56.0;
 const AI_SOURCE: f32 = 34.0;
-const CONTROLS_ROWS: [f32; 4] = [56.0, 116.0, 84.0, 82.0]; // title, now playing, toggles, volume
+const CONTROLS_ROWS: [f32; 4] = [56.0, 116.0, 164.0, 82.0]; // title, now playing, toggles, volume
 const BATTERY_ROW: f32 = 30.0;
 const FOOTER: f32 = 48.0;
 
@@ -750,20 +750,24 @@ fn controls(
     // VPN profiles can be switched from here
     y += CONTROLS_ROWS[1];
     let muted = d.volume.as_ref().is_some_and(|v| v.muted);
-    let bw = (cw - 24.0) / 4.0;
+    let bw = (cw - 16.0) / 3.0;
     let toggles = [
         ("Wi-Fi", Action::Wifi),
         ("Bluetooth", Action::Bluetooth),
         ("VPN", Action::Vpn),
+        ("Airplane", Action::Airplane),
+        ("Hotspot", Action::Hotspot),
         ("Mute", Action::Mute),
     ];
+    let row_y = y;
     for (i, (label, act)) in toggles.into_iter().enumerate() {
         let on = if act == Action::Mute {
             Some(muted)
         } else {
             d.radio(act)
         };
-        let bx = x + i as f32 * (bw + 8.0);
+        let bx = x + (i % 3) as f32 * (bw + 8.0);
+        let y = row_y + (i / 3) as f32 * 80.0;
         let lit = on == Some(true);
         g.fill_rr(bx, y, bw, 72.0, 14.0, if lit { accent } else { p.card });
         hover(g, p, st, Act::Do(act), bx, y, bw, 72.0, 14.0);

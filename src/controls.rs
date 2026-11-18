@@ -1,4 +1,4 @@
-//! Quick controls: what is playing, Wi-Fi, Bluetooth, VPN and volume.
+//! Quick controls: what is playing, Wi-Fi, Bluetooth, VPN, airplane mode, hotspot and volume.
 use crate::system::{open, wstr};
 use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -18,6 +18,8 @@ pub struct State {
     pub wifi: Option<bool>,
     pub bluetooth: Option<bool>,
     pub vpn: Option<bool>,
+    pub airplane: Option<bool>,
+    pub hotspot: Option<bool>,
 }
 
 static STATE: Mutex<State> = Mutex::new(State {
@@ -26,6 +28,8 @@ static STATE: Mutex<State> = Mutex::new(State {
     wifi: None,
     bluetooth: None,
     vpn: None,
+    airplane: None,
+    hotspot: None,
 });
 
 pub fn snapshot() -> State {
@@ -47,10 +51,12 @@ pub enum Cmd {
     Wifi,
     Bluetooth,
     Vpn,
+    Airplane,
+    Hotspot,
 }
 
 /// WinRT work on an MTA thread: the system media session, which Spotify, browsers and anything
-/// else using SMTC report to, plus the Wi-Fi and Bluetooth radios.
+/// else using SMTC report to, plus the radios, airplane mode and the mobile hotspot.
 pub fn spawn_winrt(hwnd: HWND) -> Sender<Cmd> {
     let (tx, rx) = channel();
     let h = hwnd.0 as isize;
@@ -61,7 +67,7 @@ pub fn spawn_winrt(hwnd: HWND) -> Sender<Cmd> {
         let mut mgr = None;
         let _ = Radio::RequestAccessAsync().and_then(|a| a.get());
         let (mut last, mut art_key, mut art_id) = (None::<Media>, String::new(), 0u64);
-        let mut last_radios = (None, None, None);
+        let mut last_radios = (None, None, None, None, None);
         loop {
             let cmd = rx.recv_timeout(Duration::from_millis(1000));
             if let Err(RecvTimeoutError::Disconnected) = cmd {
@@ -77,6 +83,8 @@ pub fn spawn_winrt(hwnd: HWND) -> Sender<Cmd> {
                 (Ok(Cmd::Wifi), _) => toggle_radio(RadioKind::WiFi),
                 (Ok(Cmd::Bluetooth), _) => toggle_radio(RadioKind::Bluetooth),
                 (Ok(Cmd::Vpn), _) => toggle_vpn(),
+                (Ok(Cmd::Airplane), _) => toggle_airplane(),
+                (Ok(Cmd::Hotspot), _) => toggle_hotspot(),
                 (Ok(c), Some(s)) => {
                     let r = match c {
                         Cmd::Prev => s.TrySkipPreviousAsync(),
@@ -91,6 +99,8 @@ pub fn spawn_winrt(hwnd: HWND) -> Sender<Cmd> {
                 radio_on(RadioKind::WiFi),
                 radio_on(RadioKind::Bluetooth),
                 Some(vpn_on()),
+                airplane_on(),
+                hotspot_on(),
             );
             let mut art = None;
             let media =
@@ -107,7 +117,7 @@ pub fn spawn_winrt(hwnd: HWND) -> Sender<Cmd> {
                     sh.art = None;
                 }
                 sh.media = media.clone();
-                (sh.wifi, sh.bluetooth, sh.vpn) = radios;
+                (sh.wifi, sh.bluetooth, sh.vpn, sh.airplane, sh.hotspot) = radios;
             }
             (last, last_radios) = (media, radios);
             if changed {
@@ -182,6 +192,85 @@ fn toggle_radio(kind: RadioKind) {
         };
         let _ = r.SetStateAsync(next).and_then(|a| a.get());
     }
+}
+
+/// Windows' own switch for airplane mode, the one its Settings app uses. Microsoft doesn't
+/// document it; the layout comes from people who took RMApi.dll apart.
+#[allow(non_snake_case)]
+mod rmapi {
+    use windows::core::{IUnknown, IUnknown_Vtbl, GUID, HRESULT};
+    use windows::Win32::System::Com::*;
+
+    #[windows_core::interface("db3afbfb-08e6-46c6-aa70-bf9a34c30ab7")]
+    unsafe trait IRadioManager: IUnknown {
+        fn IsRMSupported(&self, state: *mut u32) -> HRESULT;
+        fn GetUIRadioInstances(&self, instances: *mut *mut std::ffi::c_void) -> HRESULT;
+        /// `radios_on` is 0 in airplane mode. The other two must be valid pointers.
+        fn GetSystemRadioState(
+            &self,
+            radios_on: *mut i32,
+            p2: *mut i32,
+            reason: *mut u32,
+        ) -> HRESULT;
+        fn SetSystemRadioState(&self, radios_on: i32) -> HRESULT;
+    }
+
+    const RADIO_MANAGEMENT_API: GUID = GUID::from_u128(0x581333f6_28db_41be_bc7a_ff201f12f3f6);
+
+    fn radio_manager() -> Option<IRadioManager> {
+        unsafe { CoCreateInstance(&RADIO_MANAGEMENT_API, None, CLSCTX_LOCAL_SERVER).ok() }
+    }
+
+    pub fn airplane_on() -> Option<bool> {
+        let (mut on, mut p2, mut reason) = (0, 0, 0);
+        unsafe {
+            radio_manager()?
+                .GetSystemRadioState(&mut on, &mut p2, &mut reason)
+                .ok()
+                .ok()?;
+        }
+        Some(on == 0)
+    }
+
+    /// False when there's no switch to set.
+    pub fn set_airplane(on: bool) -> bool {
+        radio_manager().is_some_and(|rm| unsafe { rm.SetSystemRadioState(i32::from(!on)).is_ok() })
+    }
+}
+use rmapi::airplane_on;
+
+/// Without the switch (an edition that lacks it, say) this opens airplane mode in Settings.
+fn toggle_airplane() {
+    if !airplane_on().is_some_and(|on| rmapi::set_airplane(!on)) {
+        open("ms-settings:network-airplanemode");
+    }
+}
+
+/// The mobile hotspot that shares this PC's internet connection.
+fn tethering() -> Option<windows::Networking::NetworkOperators::NetworkOperatorTetheringManager> {
+    use windows::Networking::Connectivity::NetworkInformation;
+    use windows::Networking::NetworkOperators::NetworkOperatorTetheringManager;
+    let profile = NetworkInformation::GetInternetConnectionProfile().ok()?;
+    NetworkOperatorTetheringManager::CreateFromConnectionProfile(&profile).ok()
+}
+
+/// None while offline: there's no connection to share.
+fn hotspot_on() -> Option<bool> {
+    use windows::Networking::NetworkOperators::TetheringOperationalState;
+    let state = tethering()?.TetheringOperationalState().ok()?;
+    Some(state == TetheringOperationalState::On)
+}
+
+fn toggle_hotspot() {
+    let Some(t) = tethering() else {
+        return open("ms-settings:network-mobilehotspot");
+    };
+    let r = if hotspot_on() == Some(true) {
+        t.StopTetheringAsync()
+    } else {
+        t.StartTetheringAsync()
+    };
+    let _ = r.and_then(|a| a.get());
 }
 
 const ERROR_BUFFER_TOO_SMALL: u32 = 603;

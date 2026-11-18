@@ -142,6 +142,8 @@ pub fn tip(act: Action, d: &Data) -> Option<String> {
         Action::Wifi => radio("Wi-Fi"),
         Action::Bluetooth => radio("Bluetooth"),
         Action::Vpn => radio("VPN"),
+        Action::Airplane => radio("Airplane mode"),
+        Action::Hotspot => radio("Mobile hotspot"),
         Action::Prev => "Previous".into(),
         Action::Toggle if playing => "Pause".into(),
         Action::Toggle => "Play".into(),
@@ -180,6 +182,8 @@ pub enum Action {
     Wifi,
     Bluetooth,
     Vpn,
+    Airplane,
+    Hotspot,
     Mute, // the speakers: deafen
     Mic,
     Theme,
@@ -214,6 +218,8 @@ pub struct Data {
     pub light: Option<bool>,     // Windows apps are in light mode
     pub wifi: Option<bool>,
     pub vpn: Option<bool>,
+    pub airplane: Option<bool>,
+    pub hotspot: Option<bool>,
     pub lang: Option<(String, String)>,
     pub bluetooth: Option<bool>,
     pub tray: Vec<TrayIcon>,
@@ -1095,41 +1101,89 @@ fn ai(
 }
 
 impl Data {
-    /// Whether the Wi-Fi, Bluetooth or VPN behind `act` is on. None when it can't be told.
+    /// Whether the radio, VPN, airplane mode or hotspot behind `act` is on. None when it
+    /// can't be told.
     pub fn radio(&self, act: Action) -> Option<bool> {
         match act {
             Action::Wifi => self.wifi,
             Action::Bluetooth => self.bluetooth,
             Action::Vpn => self.vpn,
+            Action::Airplane => self.airplane,
+            Action::Hotspot => self.hotspot,
             _ => None,
         }
     }
 }
 
-/// The Wi-Fi, Bluetooth or VPN glyph for `act`, sized by `s`.
+/// The Wi-Fi, Bluetooth, VPN, airplane or hotspot glyph for `act`, sized by `s`.
 pub fn radio_glyph(g: &Gfx, act: Action, cx: f32, cy: f32, s: f32, c: C) {
     match act {
         Action::Wifi => wifi_glyph(g, cx, cy - s * 0.17, s, c),
         Action::Bluetooth => bluetooth_glyph(g, cx, cy, s * 1.22, c),
+        Action::Airplane => plane_glyph(g, cx, cy, s * 1.5, c),
+        Action::Hotspot => hotspot_glyph(g, cx, cy, s * 1.4, c),
         _ => shield_glyph(g, cx, cy, s * 1.44, c),
     }
 }
 
-/// The bar action of a Wi-Fi, Bluetooth or VPN button.
+/// The bar action of a toggle button.
 fn radio_action(c: Control) -> Action {
     match c {
         Control::Wifi => Action::Wifi,
         Control::Bluetooth => Action::Bluetooth,
+        Control::Airplane => Action::Airplane,
+        Control::Hotspot => Action::Hotspot,
         _ => Action::Vpn,
+    }
+}
+
+/// A plane seen from above, nose up.
+fn plane_glyph(g: &Gfx, cx: f32, cy: f32, s: f32, c: C) {
+    let half = [
+        (0.0, -0.5),
+        (0.06, -0.44),
+        (0.06, -0.12),
+        (0.48, 0.1),
+        (0.48, 0.18),
+        (0.06, 0.06),
+        (0.06, 0.3),
+        (0.19, 0.4),
+        (0.19, 0.47),
+        (0.0, 0.42),
+    ];
+    // the right half, then the same mirrored back up the left
+    let pts: Vec<(f32, f32)> = half
+        .iter()
+        .chain(
+            half.iter()
+                .rev()
+                .skip(1)
+                .map(|&(x, y)| (-x, y))
+                .collect::<Vec<_>>()
+                .iter(),
+        )
+        .map(|&(x, y)| (cx + x * s, cy + y * s))
+        .collect();
+    g.poly(&pts, c);
+}
+
+/// A dot with waves going out to both sides.
+fn hotspot_glyph(g: &Gfx, cx: f32, cy: f32, s: f32, c: C) {
+    g.fill_circle(cx, cy, s * 0.09, c);
+    for r in [0.24, 0.42] {
+        g.arc_between(cx, cy, s * r, 0.8, 2.34, c, s * 0.08);
+        g.arc_between(cx, cy, s * r, -2.34, -0.8, c, s * 0.08);
     }
 }
 
 /// The glyph of a quick-controls button, sized like `radio_glyph`.
 pub fn control_glyph(g: &Gfx, c: Control, cx: f32, cy: f32, s: f32, col: C) {
     match c {
-        Control::Wifi | Control::Bluetooth | Control::Vpn => {
-            radio_glyph(g, radio_action(c), cx, cy, s, col)
-        }
+        Control::Wifi
+        | Control::Bluetooth
+        | Control::Vpn
+        | Control::Airplane
+        | Control::Hotspot => radio_glyph(g, radio_action(c), cx, cy, s, col),
         Control::Volume => speaker_glyph(g, cx, cy, s * 1.5, false, col),
         Control::Battery => battery_glyph(g, cx, cy, s * 1.5, col),
     }
@@ -1298,7 +1352,11 @@ fn lang(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut 
 /// Width of one part of the quick controls tile, before the size factor.
 fn control_w(c: Control, d: &Data) -> f32 {
     match c {
-        Control::Wifi | Control::Bluetooth | Control::Vpn => 30.0,
+        Control::Wifi
+        | Control::Bluetooth
+        | Control::Vpn
+        | Control::Airplane
+        | Control::Hotspot => 30.0,
         Control::Volume => 100.0,
         Control::Battery if d.battery.is_some() => 38.0,
         Control::Battery => 0.0,
@@ -1346,7 +1404,11 @@ fn controls(
     for &part in &v.s.controls {
         let pw = control_w(part, d) * k;
         match part {
-            Control::Wifi | Control::Bluetooth | Control::Vpn => {
+            Control::Wifi
+            | Control::Bluetooth
+            | Control::Vpn
+            | Control::Airplane
+            | Control::Hotspot => {
                 let act = radio_action(part);
                 let on = d.radio(act);
                 let cx = cur + pw / 2.0;

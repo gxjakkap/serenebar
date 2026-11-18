@@ -271,23 +271,43 @@ pub enum Control {
     Wifi,
     Bluetooth,
     Vpn,
+    Airplane,
+    Hotspot,
     Volume,
     Battery,
 }
 
 impl Control {
-    pub const ALL: [Control; 5] = [
+    pub const ALL: [Control; 7] = [
         Control::Wifi,
         Control::Bluetooth,
         Control::Vpn,
+        Control::Airplane,
+        Control::Hotspot,
         Control::Volume,
         Control::Battery,
     ];
     pub fn id(self) -> &'static str {
-        ["wifi", "bluetooth", "vpn", "volume", "battery"][self as usize]
+        [
+            "wifi",
+            "bluetooth",
+            "vpn",
+            "airplane",
+            "hotspot",
+            "volume",
+            "battery",
+        ][self as usize]
     }
     pub fn label(self) -> &'static str {
-        ["Wi-Fi", "Bluetooth", "VPN", "Volume", "Battery"][self as usize]
+        [
+            "Wi-Fi",
+            "Bluetooth",
+            "VPN",
+            "Airplane",
+            "Hotspot",
+            "Volume",
+            "Battery",
+        ][self as usize]
     }
 }
 

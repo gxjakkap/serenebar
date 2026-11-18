@@ -816,6 +816,7 @@ impl App {
         }
         (self.d.media, self.d.wifi, self.d.bluetooth, self.d.vpn) =
             (c.media, c.wifi, c.bluetooth, c.vpn);
+        (self.d.airplane, self.d.hotspot) = (c.airplane, c.hotspot);
         let n = self.d.apps.len() + 1;
         for b in &mut self.bars {
             b.load_icons(&self.d);
@@ -972,6 +973,12 @@ impl App {
             }
             Action::Vpn => {
                 let _ = self.tx.send(Cmd::Vpn);
+            }
+            Action::Airplane => {
+                let _ = self.tx.send(Cmd::Airplane);
+            }
+            Action::Hotspot => {
+                let _ = self.tx.send(Cmd::Hotspot);
             }
             Action::Mute => controls::toggle_mute(),
             Action::Mic => controls::toggle_mic(),
