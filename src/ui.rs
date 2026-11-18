@@ -371,11 +371,12 @@ pub fn layout(d: &Data, v: &View, full_w: Option<f32>) -> Vec<(Widget, usize, f3
         g.iter().map(|t| t.1).sum::<f32>() + v.m.gap * g.len().saturating_sub(1) as f32
     };
     let starts: [f32; GROUPS] = match full_w {
-        Some(w) => [
+        Some(w) => crate::dock::full_width_starts(
+            w,
             v.m.pad,
-            (w - span(&groups[1])) / 2.0,
-            w - v.m.pad - span(&groups[2]),
-        ],
+            GROUP_GAP * v.m.k,
+            groups.each_ref().map(|g| span(g)),
+        ),
         None => {
             let mut x = v.m.pad;
             groups.each_ref().map(|g| {

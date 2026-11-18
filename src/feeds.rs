@@ -18,6 +18,8 @@ pub struct State {
     pub claude: Option<Vec<Limit>>,
     pub codex: Option<Vec<Limit>>,
     pub update: Option<crate::update::Release>,
+    /// That release's installer, downloaded and checked.
+    pub installer: Option<std::path::PathBuf>,
     /// How a check from Settings went: "Checking…", "Up to date" and so on, empty before one.
     pub update_note: &'static str,
 }
@@ -28,6 +30,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     claude: None,
     codex: None,
     update: None,
+    installer: None,
     update_note: "",
 });
 
@@ -140,8 +143,19 @@ pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
                     changed = true;
                 }
                 if let Some(r) = found.filter(|_| newer) {
-                    STATE.lock().unwrap().update = Some(r);
-                    changed = true;
+                    let mut st = STATE.lock().unwrap();
+                    if st.update.as_ref() != Some(&r) {
+                        (st.update, st.installer) = (Some(r.clone()), None);
+                        changed = true;
+                    }
+                    let have = st.installer.is_some();
+                    drop(st);
+                    // a failed download tries again at the next check
+                    if !have {
+                        let path = crate::update::download(&r);
+                        changed |= path.is_some();
+                        STATE.lock().unwrap().installer = path;
+                    }
                 }
             }
             if let Some(l) = codex_limits() {

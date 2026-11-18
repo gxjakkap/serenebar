@@ -36,6 +36,19 @@ pub fn mag_scale(d: f32, step: f32) -> f32 {
     }
 }
 
+/// Starts of the left, centre and right groups on a full-width bar `w` wide, from each
+/// group's span. The centre group sits in the middle unless that runs into a side group; then
+/// it slides away from it, like the Windows taskbar does when the tray grows. When there is no
+/// room on either side it keeps clear of the left group.
+pub fn full_width_starts(w: f32, pad: f32, gap: f32, spans: [f32; 3]) -> [f32; 3] {
+    let gap_after = |s: f32| if s > 0.0 { gap } else { 0.0 };
+    let right = w - pad - spans[2];
+    let centre = ((w - spans[1]) / 2.0)
+        .min(right - gap_after(spans[2]) - spans[1])
+        .max(pad + spans[0] + gap_after(spans[0]));
+    [pad, centre, right]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -62,5 +75,23 @@ mod tests {
         assert_eq!(b2[2] - b2[0], 900);
         let (wt, bt) = dock_geometry(mon, [0, 0, 1920, 68], true, 600, 56, 6, 40);
         assert_eq!((wt[1], bt[1], wt[3]), (6, 6, 6 + 56 + 40)); // docked at the top, room below
+    }
+
+    #[test]
+    fn centre_group_slides_clear_of_a_wide_right_group() {
+        // room to spare: dead centre
+        assert_eq!(
+            full_width_starts(1000.0, 10.0, 20.0, [50.0, 100.0, 100.0]),
+            [10.0, 450.0, 890.0]
+        );
+        // right group reaches past the middle: the centre ends one gap before it
+        let s = full_width_starts(1000.0, 10.0, 20.0, [50.0, 300.0, 500.0]);
+        assert_eq!(s, [10.0, 170.0, 490.0]);
+        assert_eq!(s[1] + 300.0 + 20.0, s[2]);
+        // no room at all: it stays clear of the left group
+        assert_eq!(
+            full_width_starts(1000.0, 10.0, 20.0, [50.0, 300.0, 900.0])[1],
+            80.0
+        );
     }
 }

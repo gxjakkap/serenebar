@@ -303,6 +303,7 @@ pub struct Settings {
     pub lat: Option<f64>,
     pub lon: Option<f64>,
     pub fahrenheit: bool,
+    pub auto_update: bool, // install a downloaded release when the user is away
 }
 
 impl Default for Settings {
@@ -340,6 +341,7 @@ impl Default for Settings {
             lat: None,
             lon: None,
             fahrenheit: false,
+            auto_update: true,
         }
     }
 }
@@ -413,6 +415,7 @@ impl Settings {
                 "latitude" => s.lat = v.parse().ok(),
                 "longitude" => s.lon = v.parse().ok(),
                 "units" => s.fahrenheit = v == "f",
+                "updates" => s.auto_update = v != "manual",
                 _ => {}
             }
         }
@@ -432,7 +435,7 @@ impl Settings {
             .collect();
         let controls: Vec<&str> = self.controls.iter().map(|c| c.id()).collect();
         format!(
-            "style={}\nsize={}\nedge={}\nwidth={}\nmonitors={}\naccent={}\nclock={}\ntaskbar={}\nwidgets={}\ncontrols={}\napp_order={}\npins={}\n\
+            "style={}\nsize={}\nedge={}\nwidth={}\nmonitors={}\naccent={}\nclock={}\ntaskbar={}\nupdates={}\nwidgets={}\ncontrols={}\napp_order={}\npins={}\n\
              # weather: a city name, or latitude/longitude in decimal degrees to override it. units is c or f.\n\
              city={}\nlatitude={}\nlongitude={}\nunits={}\n\
              # calendar: the secret iCal (.ics) link from Google, Outlook or iCloud\ncalendar={}\n\
@@ -441,6 +444,7 @@ impl Settings {
             self.style.name(), self.size.id(), if self.top { "top" } else { "bottom" },
             if self.full { "full" } else { "pill" }, if self.every_monitor { "all" } else { "primary" }, ACCENTS[self.accent].1.to_lowercase(),
             if self.clock24 { 24 } else { 12 }, if self.hide_taskbar { "hidden" } else { "autohide" },
+            if self.auto_update { "auto" } else { "manual" },
             widgets.join(","), controls.join(","), self.app_order.join("|"), self.pins.join("|"), self.city, opt(self.lat), opt(self.lon),
             if self.fahrenheit { "f" } else { "c" }, self.calendar, self.google_id, self.google_secret,
         )
@@ -598,6 +602,8 @@ mod tests {
                 && t.widgets == s.widgets
         );
         assert!(t.city == "Berlin" && t.calendar == "webcal://x/y.ics");
+        assert!(Settings::default().auto_update && t.auto_update);
+        assert!(!parse_test(&parse_test("updates=manual").to_ini()).auto_update);
         let g = parse_test(
             "google_client_id=123.apps.googleusercontent.com\ngoogle_client_secret=GOCSPX-x",
         );

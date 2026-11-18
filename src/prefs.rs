@@ -42,6 +42,7 @@ pub enum Act {
     GoogleGuide,
     Update,
     CheckUpdate,
+    AutoUpdate,
 }
 
 pub type Hit = ui::Hit<Act>;
@@ -732,17 +733,17 @@ fn dock(g: &Gfx, c: &mut Ctx, s: &Settings, flags: &Flags, x0: f32, cw: f32) {
         flags.screenshots,
         Act::Screenshots,
     );
-    g.text(
-        "Lets screenshots and recordings show the dock. The glass stops updating while it's on.",
-        x0,
-        406.0,
-        cw,
-        18.0,
-        10.5,
-        400,
-        c.p.sub,
-        Align::Left,
-    );
+    c.label(g, "Install updates automatically", x0, 438.0, cw - 60.0);
+    c.switch(g, x0 + cw - 40.0, 441.0, s.auto_update, Act::AutoUpdate);
+    for (t, y) in [
+        (
+            "Lets screenshots and recordings show the dock. The glass stops updating while it's on.",
+            406.0,
+        ),
+        ("While you're away, so the bar restarts unnoticed", 462.0),
+    ] {
+        g.text(t, x0, y, cw, 18.0, 10.5, 400, c.p.sub, Align::Left);
+    }
 }
 
 fn widgets(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, x0: f32, cw: f32) {
