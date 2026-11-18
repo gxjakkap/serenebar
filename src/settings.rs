@@ -182,7 +182,8 @@ pub enum Widget {
 
 impl Widget {
     /// In the order the settings window lists them.
-    pub const ALL: [Widget; 23] = [
+    /// Antigravity isn't offered yet: its numbers didn't match the app's on a Starter plan.
+    pub const ALL: [Widget; 22] = [
         Widget::Weather,
         Widget::Media,
         Widget::System,
@@ -190,7 +191,6 @@ impl Widget {
         Widget::Apps,
         Widget::Claude,
         Widget::Codex,
-        Widget::Antigravity,
         Widget::Cursor,
         Widget::DeepSeek,
         Widget::Gmail,

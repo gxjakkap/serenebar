@@ -59,6 +59,7 @@ pub struct FeedConfig {
     pub google_id: String,
     pub google_secret: String,
     pub deepseek_key: String, // as the settings keep it, encrypted
+    pub antigravity: bool,    // its tile is on, so its sign-in may be read
 }
 
 pub enum Msg {
@@ -137,7 +138,7 @@ pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
                     STATE.lock().unwrap().claude = Some(l);
                     changed = true;
                 }
-                if let Some(l) = antigravity_limits() {
+                if let Some(l) = cfg.antigravity.then(antigravity_limits).flatten() {
                     STATE.lock().unwrap().antigravity = Some(l);
                     changed = true;
                 }

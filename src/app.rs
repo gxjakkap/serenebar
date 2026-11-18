@@ -683,6 +683,7 @@ fn feed_config(s: &Settings) -> FeedConfig {
         google_id: s.google_id.clone(),
         google_secret: s.google_secret.clone(),
         deepseek_key: s.deepseek_key.clone(),
+        antigravity: s.shows(Widget::Antigravity),
     }
 }
 

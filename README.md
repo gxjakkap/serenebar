@@ -16,7 +16,6 @@ Not really. This is an experimental project that would unlikely to be maintained
 - **Weather** (`weather`): condition, city and temperature on a blue tile.
 - **Clock** (`clock`): It's a clock, what more to say about it.
 - **Claude** (`claude`) and **Codex** (`codex`): session and weekly plan limits with time to reset.
-- **Antigravity** (`antigravity`): Gemini's session and weekly limits on your Google AI plan, plus the pool for Claude and GPT models, read from the sign-in the Antigravity CLI (`agy`) keeps on this PC.
 - **Cursor** (`cursor`): how much of the plan's included usage is gone, overall and for Auto and the named models, as Cursor's dashboard shows it, read from the sign-in Cursor keeps on this PC.
 - **DeepSeek** (`deepseek`): what's left on your DeepSeek API account. Add your API key under Settings › Feeds & accounts; it's kept encrypted for your Windows account.
 - **Gmail** (`gmail`): unread conversations in your inbox, through the same Google sign-in as the calendar ([setup](docs/google-calendar.md)).
