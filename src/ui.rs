@@ -200,6 +200,7 @@ pub enum Action {
     SettingsFolder,
     Update,   // opens the newer release's page
     DeepSeek, // opens DeepSeek's usage page
+    Gmail,
 }
 
 #[derive(Default)]
@@ -218,8 +219,10 @@ pub struct Data {
     pub antigravity: Option<Vec<Limit>>,
     pub deepseek: Option<Vec<crate::limits::Balance>>,
     pub cursor: Option<Vec<Limit>>,
-    pub update: Option<crate::update::Release>, // a newer release than this build
-    pub update_note: &'static str,              // how a check from Settings went
+    pub gmail: Option<Result<u32, &'static str>>, // unread, or what to show instead
+    pub google: bool,                             // signed in with Google
+    pub update: Option<crate::update::Release>,   // a newer release than this build
+    pub update_note: &'static str,                // how a check from Settings went
     pub volume: Option<crate::controls::Volume>,
     pub app_volumes: Vec<crate::controls::AppVolume>, // read only while the controls panel is open
     pub mic: Option<bool>,                            // muted; None without a microphone
@@ -377,6 +380,7 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
         Widget::Network => 92.0 * k,
         Widget::Progress => 140.0 * k,
         Widget::DeepSeek => 132.0 * k,
+        Widget::Gmail => 120.0 * k,
         Widget::Battery if d.battery.is_some() => 56.0 * k,
         Widget::Apps
         | Widget::Claude
@@ -595,6 +599,7 @@ pub fn draw_tiles(g: &Gfx, v: &View, d: &Data, full_w: Option<f32>) -> Vec<Hit<A
                 Widget::Theme => theme_toggle(g, v, x, y, w, h, &mut hits),
                 Widget::Progress => progress(g, v, d, x, y, w, h, &mut hits),
                 Widget::DeepSeek => deepseek(g, v, d, x, y, w, h, &mut hits),
+                Widget::Gmail => gmail(g, v, d, x, y, w, h, &mut hits),
             }
         }
     }
@@ -1971,6 +1976,64 @@ fn deepseek(
         tw,
         20.0 * k,
         font(k, 14.0),
+        600,
+        v.th.text,
+        Align::Left,
+    );
+    hits.push((x, y, w, h, act));
+}
+
+/// An envelope with Gmail's red M across its flap.
+fn gmail_logo(g: &Gfx, x: f32, y: f32, s: f32) {
+    g.fill_rr(x, y, s, s, s * 0.24, white(1.0));
+    let (l, r, t, b) = (x + s * 0.2, x + s * 0.8, y + s * 0.3, y + s * 0.72);
+    let red = rgba(0xEA4335, 1.0);
+    let w = s * 0.09;
+    g.line(l, b, l, t, red, w);
+    g.line(l, t, x + s / 2.0, y + s * 0.52, red, w);
+    g.line(x + s / 2.0, y + s * 0.52, r, t, red, w);
+    g.line(r, t, r, b, red, w);
+}
+
+/// Unread conversations in the Gmail inbox. Opens Gmail, or Settings to sign in.
+fn gmail(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut Vec<Hit<Action>>) {
+    let k = v.m.k;
+    let act = match d.gmail {
+        Some(Ok(_)) => Action::Gmail,
+        _ => Action::Settings,
+    };
+    tile(g, v, x, y, w, h, v.hover == Some(act));
+    gmail_logo(g, x + 6.0 * k, y + (h - 30.0 * k) / 2.0, 30.0 * k);
+    let (tx, tw) = (x + 42.0 * k, w - 48.0 * k);
+    let (label, value) = match d.gmail {
+        Some(Ok(n)) => ("Unread", n.to_string()),
+        Some(Err(note)) => ("Gmail", note.to_string()),
+        None if d.google => ("Unread", "…".to_string()),
+        None => ("Gmail", "Sign in".to_string()),
+    };
+    let big = if matches!(d.gmail, Some(Ok(_))) {
+        16.0
+    } else {
+        11.0
+    };
+    g.text(
+        label,
+        tx,
+        y + 5.0 * k,
+        tw,
+        15.0 * k,
+        font(k, 10.0),
+        500,
+        v.th.sub,
+        Align::Left,
+    );
+    g.text(
+        &value,
+        tx,
+        y + 19.0 * k,
+        tw,
+        20.0 * k,
+        font(k, big),
         600,
         v.th.text,
         Align::Left,

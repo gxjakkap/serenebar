@@ -892,7 +892,7 @@ fn feeds(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, flags: &Flags, x0: f32,
         Align::Left,
     );
 
-    c.title(g, "Google Calendar", x0, 258.0);
+    c.title(g, "Google Calendar and Gmail", x0, 258.0);
     if flags.google {
         let line = if flags.google_account.is_empty() {
             "Signed in. Calendars you tick in Google Calendar show up here.".to_string()

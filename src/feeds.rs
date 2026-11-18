@@ -22,6 +22,8 @@ pub struct State {
     pub antigravity: Option<Vec<Limit>>,
     pub deepseek: Option<Vec<Balance>>,
     pub cursor: Option<Vec<Limit>>,
+    /// The inbox's unread count, or what to show instead.
+    pub gmail: Option<Result<u32, &'static str>>,
     pub update: Option<crate::update::Release>,
     /// That release's installer, downloaded and checked.
     pub installer: Option<std::path::PathBuf>,
@@ -37,6 +39,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     antigravity: None,
     deepseek: None,
     cursor: None,
+    gmail: None,
     update: None,
     installer: None,
     update_note: "",
@@ -67,7 +70,7 @@ pub enum Msg {
     CheckUpdate,
 }
 
-/// Weather and calendar every 15 minutes, Claude, Antigravity, Cursor and DeepSeek every 5, Codex limits every minute,
+/// Weather and calendar every 15 minutes, Gmail, Claude, Antigravity, Cursor and DeepSeek every 5, Codex limits every minute,
 /// releases once a day.
 pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
     let h = hwnd.0 as isize;
@@ -138,6 +141,13 @@ pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
                     STATE.lock().unwrap().antigravity = Some(l);
                     changed = true;
                 }
+                match crate::google::gmail_unread(&cfg.google_id, &cfg.google_secret) {
+                    Err("") => {} // signed out or offline: keep what's there
+                    r => {
+                        STATE.lock().unwrap().gmail = Some(r);
+                        changed = true;
+                    }
+                }
                 if let Some(l) = cursor_limits() {
                     STATE.lock().unwrap().cursor = Some(l);
                     changed = true;
@@ -201,6 +211,7 @@ pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
                         != (&cfg.calendar, &cfg.google_id, &cfg.google_secret)
                     {
                         st.events.clear();
+                        st.gmail = None;
                     }
                     drop(st);
                     cfg = new;
@@ -208,7 +219,9 @@ pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
                     minute = 0;
                 }
                 Ok(Msg::Refetch) => {
-                    STATE.lock().unwrap().events.clear();
+                    let mut st = STATE.lock().unwrap();
+                    (st.events, st.gmail) = (vec![], None);
+                    drop(st);
                     minute = 0;
                 }
                 Ok(Msg::CheckUpdate) => {

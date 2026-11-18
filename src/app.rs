@@ -808,6 +808,7 @@ impl App {
             (f.weather, f.events, f.claude, f.codex);
         (self.d.antigravity, self.d.deepseek, self.d.cursor) =
             (f.antigravity, f.deepseek, f.cursor);
+        (self.d.gmail, self.d.google) = (f.gmail, google::connected());
         (self.d.update, self.d.update_note, self.installer) =
             (f.update, f.update_note, f.installer);
         self.d.weather_w = self.d.weather.as_ref().map_or(0.0, |wx| {
@@ -958,6 +959,7 @@ impl App {
             }
             Action::TaskManager => system::open("taskmgr.exe"),
             Action::DeepSeek => system::open("https://platform.deepseek.com/usage"),
+            Action::Gmail => system::open("https://mail.google.com/"),
             // the release page when its installer couldn't be fetched or checked
             Action::Update => match (&self.installer, &self.d.update) {
                 (Some(_), _) => self.install(),

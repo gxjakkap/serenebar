@@ -176,11 +176,12 @@ pub enum Widget {
     Antigravity,
     DeepSeek,
     Cursor,
+    Gmail,
 }
 
 impl Widget {
     /// In the order the settings window lists them.
-    pub const ALL: [Widget; 21] = [
+    pub const ALL: [Widget; 22] = [
         Widget::Weather,
         Widget::Media,
         Widget::System,
@@ -191,6 +192,7 @@ impl Widget {
         Widget::Antigravity,
         Widget::Cursor,
         Widget::DeepSeek,
+        Widget::Gmail,
         Widget::Controls,
         Widget::Battery,
         Widget::Tray,
@@ -228,6 +230,7 @@ impl Widget {
             Widget::Antigravity => "antigravity",
             Widget::DeepSeek => "deepseek",
             Widget::Cursor => "cursor",
+            Widget::Gmail => "gmail",
         }
     }
 
@@ -254,6 +257,7 @@ impl Widget {
             Widget::Antigravity => "Antigravity limits",
             Widget::DeepSeek => "DeepSeek balance",
             Widget::Cursor => "Cursor usage",
+            Widget::Gmail => "Gmail unread",
         }
     }
 
