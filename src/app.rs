@@ -1459,15 +1459,20 @@ impl App {
             }
             Act::Drag(_) => {}
             Act::Variant(i) => {
-                let Some(w) = self
-                    .prefs
-                    .as_ref()
-                    .and_then(|p| p.st.rows.get(i))
-                    .map(|r| r.widget)
-                else {
+                let Some(p) = &self.prefs else { return };
+                let Some(w) = p.st.rows.get(i).map(|r| r.widget) else {
                     return;
                 };
-                self.change(|s| s.next_variant(w));
+                let (all, now) = (w.variants(), self.s.variant(w));
+                let cmd = popup_menu(p.hwnd, true, |m| unsafe {
+                    for (n, x) in all.iter().enumerate() {
+                        let flags = if *x == now { MF_CHECKED } else { MF_UNCHECKED };
+                        let _ = AppendMenuW(m, flags, n + 1, &HSTRING::from(x.label()));
+                    }
+                });
+                if let Some(&x) = (cmd as usize).checked_sub(1).and_then(|n| all.get(n)) {
+                    self.change(|s| s.set_variant(w, x));
+                }
             }
             Act::About => self.toggle_panel(Panel::About),
             Act::GoogleSignIn => google::sign_in(

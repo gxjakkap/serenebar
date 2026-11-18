@@ -620,16 +620,15 @@ impl Settings {
             .unwrap_or(Variant::Large)
     }
 
-    /// Moves tile `w` on to its next look, round to the first after the last.
-    pub fn next_variant(&mut self, w: Widget) {
+    /// Gives tile `w` the look `x`. Its first look is the default, so that one isn't written.
+    pub fn set_variant(&mut self, w: Widget, x: Variant) {
         let all = w.variants();
-        let Some(i) = all.iter().position(|&x| x == self.variant(w)) else {
+        if !all.contains(&x) {
             return;
-        };
-        let next = all[(i + 1) % all.len()];
+        }
         self.variants.retain(|v| v.0 != w);
-        if next != all[0] {
-            self.variants.push((w, next));
+        if x != all[0] {
+            self.variants.push((w, x));
         }
     }
 }
@@ -914,7 +913,11 @@ mod tests {
         assert_eq!(s.variants, [(Clock, Variant::Small)]); // apps has no looks
         assert_eq!(parse_test(&s.to_ini()).variant(Clock), Variant::Small);
         assert_eq!(s.variant(Media), Variant::Large);
-        s.next_variant(Clock);
+        s.set_variant(Clock, Variant::Medium);
+        assert_eq!(s.variants, [(Clock, Variant::Medium)]);
+        s.set_variant(Clock, Variant::ExtraLarge); // not one of the clock's
+        assert_eq!(s.variant(Clock), Variant::Medium);
+        s.set_variant(Clock, Variant::Large);
         assert!(s.variant(Clock) == Variant::Large && s.variants.is_empty());
     }
 }

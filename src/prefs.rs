@@ -33,7 +33,7 @@ pub enum Act {
     Remove(usize),
     Add(usize), // a group's +: pick a hidden widget to show there
     Drag(usize),
-    Variant(usize), // a widget row's look: on to the next one
+    Variant(usize), // a widget row's look: pick another from a menu
     Control(Control),
     Focus(Field),
     Pick(usize),
@@ -1077,11 +1077,11 @@ fn row(
     if st.drag.is_none() {
         c.hits.push((x - 2.0, y, 26.0, ROW, Act::Remove(i)));
     }
-    // its look, for tiles that have more than one: click for the next
+    // its look, for tiles that have more than one: a select that opens the list of them
     let mut label_w = w - 68.0;
     if r.widget.variants().len() > 1 {
         let look = s.variant(r.widget).label();
-        let cw = g.measure(look, 11.0, 600) + 22.0;
+        let cw = g.measure(look, 11.0, 600) + 34.0;
         let (cx, cy) = (x + w - 30.0 - cw, y + 4.0);
         g.fill_rr(cx, cy, cw, ROW - 8.0, 7.0, c.p.card);
         if st.drag.is_none() {
@@ -1090,15 +1090,19 @@ fn row(
         }
         g.text(
             look,
-            cx + 8.0,
+            cx + 10.0,
             cy,
-            cw - 16.0,
+            cw - 30.0,
             ROW - 8.0,
             11.0,
             600,
-            c.link,
-            Align::Center,
+            c.p.text,
+            Align::Left,
         );
+        // the select's chevron
+        let (vx, vy) = (cx + cw - 14.0, cy + (ROW - 8.0) / 2.0);
+        g.line(vx - 3.5, vy - 1.75, vx, vy + 1.75, c.p.sub, 1.5);
+        g.line(vx, vy + 1.75, vx + 3.5, vy - 1.75, c.p.sub, 1.5);
         label_w -= cw + 6.0;
     }
     g.text(
