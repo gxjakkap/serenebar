@@ -1,4 +1,4 @@
-//! Quick controls: what is playing, Wi-Fi, Bluetooth, VPN and volume.
+//! Quick controls: what is playing, Wi-Fi, Bluetooth, VPN, airplane mode, hotspot and volume.
 use crate::system::{open, wstr};
 use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -18,6 +18,8 @@ pub struct State {
     pub wifi: Option<bool>,
     pub bluetooth: Option<bool>,
     pub vpn: Option<bool>,
+    pub airplane: Option<bool>,
+    pub hotspot: Option<bool>,
 }
 
 static STATE: Mutex<State> = Mutex::new(State {
@@ -26,6 +28,8 @@ static STATE: Mutex<State> = Mutex::new(State {
     wifi: None,
     bluetooth: None,
     vpn: None,
+    airplane: None,
+    hotspot: None,
 });
 
 pub fn snapshot() -> State {
@@ -38,6 +42,9 @@ pub struct Media {
     pub artist: String,
     pub playing: bool,
     pub art_id: u64, // goes up by one when the cover changes
+    /// Seconds into the track and its length, 0 when the player doesn't say.
+    pub position: f64,
+    pub length: f64,
 }
 
 pub enum Cmd {
@@ -47,10 +54,12 @@ pub enum Cmd {
     Wifi,
     Bluetooth,
     Vpn,
+    Airplane,
+    Hotspot,
 }
 
 /// WinRT work on an MTA thread: the system media session, which Spotify, browsers and anything
-/// else using SMTC report to, plus the Wi-Fi and Bluetooth radios.
+/// else using SMTC report to, plus the radios, airplane mode and the mobile hotspot.
 pub fn spawn_winrt(hwnd: HWND) -> Sender<Cmd> {
     let (tx, rx) = channel();
     let h = hwnd.0 as isize;
@@ -61,7 +70,7 @@ pub fn spawn_winrt(hwnd: HWND) -> Sender<Cmd> {
         let mut mgr = None;
         let _ = Radio::RequestAccessAsync().and_then(|a| a.get());
         let (mut last, mut art_key, mut art_id) = (None::<Media>, String::new(), 0u64);
-        let mut last_radios = (None, None, None);
+        let mut last_radios = (None, None, None, None, None);
         loop {
             let cmd = rx.recv_timeout(Duration::from_millis(1000));
             if let Err(RecvTimeoutError::Disconnected) = cmd {
@@ -77,6 +86,8 @@ pub fn spawn_winrt(hwnd: HWND) -> Sender<Cmd> {
                 (Ok(Cmd::Wifi), _) => toggle_radio(RadioKind::WiFi),
                 (Ok(Cmd::Bluetooth), _) => toggle_radio(RadioKind::Bluetooth),
                 (Ok(Cmd::Vpn), _) => toggle_vpn(),
+                (Ok(Cmd::Airplane), _) => toggle_airplane(),
+                (Ok(Cmd::Hotspot), _) => toggle_hotspot(),
                 (Ok(c), Some(s)) => {
                     let r = match c {
                         Cmd::Prev => s.TrySkipPreviousAsync(),
@@ -91,6 +102,8 @@ pub fn spawn_winrt(hwnd: HWND) -> Sender<Cmd> {
                 radio_on(RadioKind::WiFi),
                 radio_on(RadioKind::Bluetooth),
                 Some(vpn_on()),
+                airplane_on(),
+                hotspot_on(),
             );
             let mut art = None;
             let media =
@@ -107,7 +120,7 @@ pub fn spawn_winrt(hwnd: HWND) -> Sender<Cmd> {
                     sh.art = None;
                 }
                 sh.media = media.clone();
-                (sh.wifi, sh.bluetooth, sh.vpn) = radios;
+                (sh.wifi, sh.bluetooth, sh.vpn, sh.airplane, sh.hotspot) = radios;
             }
             (last, last_radios) = (media, radios);
             if changed {
@@ -140,12 +153,35 @@ fn read_media(
                 .map(Arc::new),
         );
     }
+    let (position, length) = s
+        .GetTimelineProperties()
+        .and_then(|t| Ok((t.Position()?, t.EndTime()?, t.LastUpdatedTime()?)))
+        .map_or((0.0, 0.0), |(pos, end, at)| {
+            // the player reports where it was when it last said so; it has played on since
+            let since = if playing {
+                (filetime_now() - at.UniversalTime).max(0) as f64 / 1e7
+            } else {
+                0.0
+            };
+            let length = end.Duration as f64 / 1e7;
+            ((pos.Duration as f64 / 1e7 + since).min(length), length)
+        });
     Ok(Media {
         title,
         artist,
         playing,
         art_id: *art_id,
+        position,
+        length,
     })
+}
+
+/// Now, in the 100 ns units since 1601 that WinRT's DateTime counts.
+fn filetime_now() -> i64 {
+    let unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as i64 / 100);
+    unix + 116_444_736_000_000_000
 }
 
 fn read_stream(t: &windows::Storage::Streams::IRandomAccessStreamReference) -> Result<Vec<u8>> {
@@ -182,6 +218,85 @@ fn toggle_radio(kind: RadioKind) {
         };
         let _ = r.SetStateAsync(next).and_then(|a| a.get());
     }
+}
+
+/// Windows' own switch for airplane mode, the one its Settings app uses. Microsoft doesn't
+/// document it; the layout comes from people who took RMApi.dll apart.
+#[allow(non_snake_case)]
+mod rmapi {
+    use windows::core::{IUnknown, IUnknown_Vtbl, GUID, HRESULT};
+    use windows::Win32::System::Com::*;
+
+    #[windows_core::interface("db3afbfb-08e6-46c6-aa70-bf9a34c30ab7")]
+    unsafe trait IRadioManager: IUnknown {
+        fn IsRMSupported(&self, state: *mut u32) -> HRESULT;
+        fn GetUIRadioInstances(&self, instances: *mut *mut std::ffi::c_void) -> HRESULT;
+        /// `radios_on` is 0 in airplane mode. The other two must be valid pointers.
+        fn GetSystemRadioState(
+            &self,
+            radios_on: *mut i32,
+            p2: *mut i32,
+            reason: *mut u32,
+        ) -> HRESULT;
+        fn SetSystemRadioState(&self, radios_on: i32) -> HRESULT;
+    }
+
+    const RADIO_MANAGEMENT_API: GUID = GUID::from_u128(0x581333f6_28db_41be_bc7a_ff201f12f3f6);
+
+    fn radio_manager() -> Option<IRadioManager> {
+        unsafe { CoCreateInstance(&RADIO_MANAGEMENT_API, None, CLSCTX_LOCAL_SERVER).ok() }
+    }
+
+    pub fn airplane_on() -> Option<bool> {
+        let (mut on, mut p2, mut reason) = (0, 0, 0);
+        unsafe {
+            radio_manager()?
+                .GetSystemRadioState(&mut on, &mut p2, &mut reason)
+                .ok()
+                .ok()?;
+        }
+        Some(on == 0)
+    }
+
+    /// False when there's no switch to set.
+    pub fn set_airplane(on: bool) -> bool {
+        radio_manager().is_some_and(|rm| unsafe { rm.SetSystemRadioState(i32::from(!on)).is_ok() })
+    }
+}
+use rmapi::airplane_on;
+
+/// Without the switch (an edition that lacks it, say) this opens airplane mode in Settings.
+fn toggle_airplane() {
+    if !airplane_on().is_some_and(|on| rmapi::set_airplane(!on)) {
+        open("ms-settings:network-airplanemode");
+    }
+}
+
+/// The mobile hotspot that shares this PC's internet connection.
+fn tethering() -> Option<windows::Networking::NetworkOperators::NetworkOperatorTetheringManager> {
+    use windows::Networking::Connectivity::NetworkInformation;
+    use windows::Networking::NetworkOperators::NetworkOperatorTetheringManager;
+    let profile = NetworkInformation::GetInternetConnectionProfile().ok()?;
+    NetworkOperatorTetheringManager::CreateFromConnectionProfile(&profile).ok()
+}
+
+/// None while offline: there's no connection to share.
+fn hotspot_on() -> Option<bool> {
+    use windows::Networking::NetworkOperators::TetheringOperationalState;
+    let state = tethering()?.TetheringOperationalState().ok()?;
+    Some(state == TetheringOperationalState::On)
+}
+
+fn toggle_hotspot() {
+    let Some(t) = tethering() else {
+        return open("ms-settings:network-mobilehotspot");
+    };
+    let r = if hotspot_on() == Some(true) {
+        t.StopTetheringAsync()
+    } else {
+        t.StartTetheringAsync()
+    };
+    let _ = r.and_then(|a| a.get());
 }
 
 const ERROR_BUFFER_TOO_SMALL: u32 = 603;
@@ -318,17 +433,56 @@ pub struct Volume {
     pub name: String,
 }
 
+fn devices() -> Option<windows::Win32::Media::Audio::IMMDeviceEnumerator> {
+    use windows::Win32::Media::Audio::*;
+    unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok() }
+}
+
 fn endpoint() -> Option<(
     windows::Win32::Media::Audio::IMMDevice,
     windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume,
 )> {
     use windows::Win32::Media::Audio::*;
     unsafe {
-        let en: IMMDeviceEnumerator =
-            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
-        let dev = en.GetDefaultAudioEndpoint(eRender, eConsole).ok()?;
+        let dev = devices()?.GetDefaultAudioEndpoint(eRender, eConsole).ok()?;
         let vol = dev.Activate(CLSCTX_ALL, None).ok()?;
         Some((dev, vol))
+    }
+}
+
+/// Whether the microphone calls use (the default communications device) is muted.
+/// None without a microphone.
+pub fn mic_muted() -> Option<bool> {
+    use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
+    use windows::Win32::Media::Audio::*;
+    unsafe {
+        let dev = devices()?
+            .GetDefaultAudioEndpoint(eCapture, eCommunications)
+            .ok()?;
+        let vol: IAudioEndpointVolume = dev.Activate(CLSCTX_ALL, None).ok()?;
+        Some(vol.GetMute().ok()?.as_bool())
+    }
+}
+
+/// Mutes or unmutes every microphone, so apps that picked another one are muted too.
+pub fn toggle_mic() {
+    use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
+    use windows::Win32::Media::Audio::*;
+    let mute = !mic_muted().unwrap_or(true);
+    let Some(list) =
+        devices().and_then(|e| unsafe { e.EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE).ok() })
+    else {
+        return;
+    };
+    unsafe {
+        for i in 0..list.GetCount().unwrap_or(0) {
+            let vol = list
+                .Item(i)
+                .and_then(|d| d.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None));
+            if let Ok(v) = vol {
+                let _ = v.SetMute(mute, std::ptr::null());
+            }
+        }
     }
 }
 
@@ -376,5 +530,108 @@ pub fn toggle_mute() {
     unsafe {
         let muted = vol.GetMute().map(|m| m.as_bool()).unwrap_or(false);
         let _ = vol.SetMute(!muted, std::ptr::null());
+    }
+}
+
+/// One app's volume in the mixer. Apps with several streams show as one.
+pub struct AppVolume {
+    pub name: String,
+    pub level: f32,
+    pub muted: bool,
+}
+
+/// Names by process id. Reading a program's description goes through the shell, too slow to
+/// repeat for every move of a slider.
+static NAMES: Mutex<Vec<(u32, String)>> = Mutex::new(vec![]);
+
+fn app_name(pid: u32) -> Option<String> {
+    if let Some((_, n)) = NAMES.lock().unwrap().iter().find(|e| e.0 == pid) {
+        return Some(n.clone());
+    }
+    let name = crate::apps::exe_name(&crate::apps::exe_of_pid(pid)?);
+    let mut names = NAMES.lock().unwrap();
+    if names.len() > 64 {
+        names.clear(); // ids get reused; start over now and then
+    }
+    names.push((pid, name.clone()));
+    Some(name)
+}
+
+/// The default output's audio sessions that haven't ended, each with its app's name.
+fn sessions() -> Vec<(String, windows::Win32::Media::Audio::ISimpleAudioVolume)> {
+    use windows::Win32::Media::Audio::*;
+    let Some((dev, _)) = endpoint() else {
+        return vec![];
+    };
+    let mut out = vec![];
+    unsafe {
+        let Ok(mgr) = dev.Activate::<IAudioSessionManager2>(CLSCTX_ALL, None) else {
+            return out;
+        };
+        let Ok(list) = mgr.GetSessionEnumerator() else {
+            return out;
+        };
+        for i in 0..list.GetCount().unwrap_or(0) {
+            let Ok(s) = list.GetSession(i) else { continue };
+            if s.GetState().is_ok_and(|st| st == AudioSessionStateExpired) {
+                continue;
+            }
+            let (Ok(s2), Ok(vol)) = (
+                s.cast::<IAudioSessionControl2>(),
+                s.cast::<ISimpleAudioVolume>(),
+            ) else {
+                continue;
+            };
+            let name = if s2.IsSystemSoundsSession() == S_OK {
+                "System sounds".to_string()
+            } else {
+                match s2.GetProcessId().ok().and_then(app_name) {
+                    Some(name) => name,
+                    None => continue,
+                }
+            };
+            out.push((name, vol));
+        }
+    }
+    out
+}
+
+/// Every app with sound on the default output, in the order Windows lists them.
+pub fn app_volumes() -> Vec<AppVolume> {
+    let mut out: Vec<AppVolume> = vec![];
+    for (name, vol) in sessions() {
+        if out.iter().any(|a| a.name == name) {
+            continue;
+        }
+        let (level, muted) = unsafe {
+            (
+                vol.GetMasterVolume().unwrap_or(1.0),
+                vol.GetMute().is_ok_and(|m| m.as_bool()),
+            )
+        };
+        out.push(AppVolume { name, level, muted });
+    }
+    out
+}
+
+/// Sets the level of every stream of the app called `name`, and unmutes it.
+pub fn set_app_volume(name: &str, level: f32) {
+    for (_, vol) in sessions().into_iter().filter(|s| s.0 == name) {
+        unsafe {
+            let _ = vol.SetMasterVolume(level.clamp(0.0, 1.0), std::ptr::null());
+            let _ = vol.SetMute(false, std::ptr::null());
+        }
+    }
+}
+
+pub fn toggle_app_mute(name: &str) {
+    let streams: Vec<_> = sessions().into_iter().filter(|s| s.0 == name).collect();
+    let muted = streams
+        .first()
+        .is_some_and(|(_, v)| unsafe { v.GetMute().is_ok_and(|m| m.as_bool()) });
+    for (_, vol) in streams {
+        unsafe {
+            let _ = vol.SetMute(!muted, std::ptr::null());
+        }
     }
 }

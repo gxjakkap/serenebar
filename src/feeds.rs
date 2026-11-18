@@ -3,7 +3,9 @@ use crate::calendar::Event;
 use crate::calendar::{fetch_ics, to_local};
 use crate::http::curl;
 use crate::limits::Limit;
-use crate::limits::{claude_limits, codex_limits};
+use crate::limits::{
+    antigravity_limits, claude_limits, codex_limits, cursor_limits, deepseek_balance, Balance,
+};
 use crate::weather::Weather;
 use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::sync::Mutex;
@@ -17,6 +19,11 @@ pub struct State {
     pub events: Vec<Event>,
     pub claude: Option<Vec<Limit>>,
     pub codex: Option<Vec<Limit>>,
+    pub antigravity: Option<Vec<Limit>>,
+    pub deepseek: Option<Vec<Balance>>,
+    pub cursor: Option<Vec<Limit>>,
+    /// The inbox's unread count, or what to show instead.
+    pub gmail: Option<Result<u32, &'static str>>,
     pub update: Option<crate::update::Release>,
     /// That release's installer, downloaded and checked.
     pub installer: Option<std::path::PathBuf>,
@@ -29,6 +36,10 @@ static STATE: Mutex<State> = Mutex::new(State {
     events: vec![],
     claude: None,
     codex: None,
+    antigravity: None,
+    deepseek: None,
+    cursor: None,
+    gmail: None,
     update: None,
     installer: None,
     update_note: "",
@@ -47,6 +58,8 @@ pub struct FeedConfig {
     pub calendar: String,
     pub google_id: String,
     pub google_secret: String,
+    pub deepseek_key: String, // as the settings keep it, encrypted
+    pub antigravity: bool,    // its tile is on, so its sign-in may be read
 }
 
 pub enum Msg {
@@ -58,7 +71,7 @@ pub enum Msg {
     CheckUpdate,
 }
 
-/// Weather and calendar every 15 minutes, Claude limits every 5, Codex limits every minute,
+/// Weather and calendar every 15 minutes, Gmail, Claude, Antigravity, Cursor and DeepSeek every 5, Codex limits every minute,
 /// releases once a day.
 pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
     let h = hwnd.0 as isize;
@@ -125,6 +138,26 @@ pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
                     STATE.lock().unwrap().claude = Some(l);
                     changed = true;
                 }
+                if let Some(l) = cfg.antigravity.then(antigravity_limits).flatten() {
+                    STATE.lock().unwrap().antigravity = Some(l);
+                    changed = true;
+                }
+                match crate::google::gmail_unread(&cfg.google_id, &cfg.google_secret) {
+                    Err("") => {} // signed out or offline: keep what's there
+                    r => {
+                        STATE.lock().unwrap().gmail = Some(r);
+                        changed = true;
+                    }
+                }
+                if let Some(l) = cursor_limits() {
+                    STATE.lock().unwrap().cursor = Some(l);
+                    changed = true;
+                }
+                let key = crate::system::unprotect(&cfg.deepseek_key);
+                if let Some(b) = (!key.is_empty()).then(|| deepseek_balance(&key)).flatten() {
+                    STATE.lock().unwrap().deepseek = Some(b);
+                    changed = true;
+                }
             }
             // its own clock, since a settings change restarts `minute`
             if Instant::now() >= next_release_check {
@@ -172,10 +205,14 @@ pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
                     if (&new.city, new.lat, new.lon) != (&cfg.city, cfg.lat, cfg.lon) {
                         st.weather = None;
                     }
+                    if new.deepseek_key != cfg.deepseek_key {
+                        st.deepseek = None;
+                    }
                     if (&new.calendar, &new.google_id, &new.google_secret)
                         != (&cfg.calendar, &cfg.google_id, &cfg.google_secret)
                     {
                         st.events.clear();
+                        st.gmail = None;
                     }
                     drop(st);
                     cfg = new;
@@ -183,7 +220,9 @@ pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
                     minute = 0;
                 }
                 Ok(Msg::Refetch) => {
-                    STATE.lock().unwrap().events.clear();
+                    let mut st = STATE.lock().unwrap();
+                    (st.events, st.gmail) = (vec![], None);
+                    drop(st);
                     minute = 0;
                 }
                 Ok(Msg::CheckUpdate) => {

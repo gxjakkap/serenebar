@@ -68,6 +68,19 @@ pub fn day_name(weekday: u32) -> &'static str {
     WEEKDAYS[weekday as usize % 7]
 }
 
+/// "Monday" for weekday 1.
+pub fn day_full_name(weekday: u32) -> &'static str {
+    [
+        "Sunday",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+    ][weekday as usize % 7]
+}
+
 /// "November" for month 11.
 pub fn month_name(month: u32) -> &'static str {
     MONTHS[(month as usize + 11) % 12]
@@ -161,6 +174,21 @@ pub fn fmt_left(secs: i64) -> String {
     }
 }
 
+/// How much of today, this month and this year has gone by, each from 0 to 1.
+pub fn progress(t: LocalTime) -> [f32; 3] {
+    let day = (t.hour * 3600 + t.minute * 60 + t.second) as f64 / 86400.0;
+    let since = |y: i32, m: u32| (t.days() - days_from_civil(y, m, 1)) as f64 + day;
+    let (ny, nm) = add_month((t.year, t.month), 1);
+    let month_len = (days_from_civil(ny, nm, 1) - days_from_civil(t.year, t.month, 1)) as f64;
+    let year_len = (days_from_civil(t.year + 1, 1, 1) - days_from_civil(t.year, 1, 1)) as f64;
+    [
+        day,
+        since(t.year, t.month) / month_len,
+        since(t.year, 1) / year_len,
+    ]
+    .map(|f| f as f32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,5 +263,27 @@ mod tests {
                 "12:00 PM".into()
             )
         );
+    }
+
+    #[test]
+    fn day_month_year_progress() {
+        let at = |month, day, hour| LocalTime {
+            year: 2026,
+            month,
+            day,
+            hour,
+            minute: 0,
+            second: 0,
+        };
+        assert_eq!(progress(at(1, 1, 0)), [0.0, 0.0, 0.0]);
+        assert_eq!(progress(at(1, 1, 12))[0], 0.5);
+        let [_, m, y] = progress(at(2, 15, 0)); // 14 of February's 28 days gone
+        assert_eq!(m, 0.5);
+        assert!((y - 45.0 / 365.0).abs() < 1e-6);
+        let leap = LocalTime {
+            year: 2028,
+            ..at(12, 31, 0)
+        };
+        assert!((progress(leap)[2] - 365.0 / 366.0).abs() < 1e-6);
     }
 }

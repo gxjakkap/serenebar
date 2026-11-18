@@ -1,4 +1,4 @@
-# Google Calendar sign-in
+# Google Calendar and Gmail sign-in
 
 serenebar has no shared OAuth client. To sign in with Google you make one in your own Google Cloud
 project. It's free and takes about five minutes.
@@ -11,6 +11,7 @@ link (Google Calendar → Settings → your calendar → *Secret address in iCal
 
 1. Go to <https://console.cloud.google.com/> and create a project (any name works).
 2. Open **APIs & Services → Library**, search for **Google Calendar API** and click **Enable**.
+3. For the Gmail unread widget, do the same for **Gmail API**.
 
 ## 2. Set up the consent screen
 
@@ -33,11 +34,14 @@ random port, and Google allows that for desktop clients.
 
 ## 4. Sign in
 
-1. In serenebar, open **Settings → Weather & Calendar**.
-2. Paste the client ID and secret into the two **Google Calendar** fields.
+1. In serenebar, open **Settings → Feeds & accounts**.
+2. Paste the client ID and secret into the two **Google Calendar and Gmail** fields.
 3. Click **Sign in with Google**, choose your account in the browser and allow read-only calendar
-   access. If Google warns that the app isn't verified, click **Continue**.
+   access and Gmail labels. If Google warns that the app isn't verified, click **Continue**.
 
-serenebar only asks for `calendar.readonly`. It shows events from every calendar you have ticked in
-Google Calendar's sidebar. The refresh token is encrypted with Windows DPAPI, so only your Windows
+serenebar only asks for `calendar.readonly` and `gmail.labels`. The Gmail one gives the inbox's
+unread count and can't read any mail. If you signed in before the Gmail widget existed, sign out
+and in again to allow it.
+
+Events come from every calendar you have ticked in Google Calendar's sidebar. The refresh token is encrypted with Windows DPAPI, so only your Windows
 account can read it. **Sign out** deletes it.

@@ -10,15 +10,26 @@ Not really. This is an experimental project that would unlikely to be maintained
 
 ## Widgets
 
+Add tiles with the + by a group in Settings › Widgets: it opens a picker with a preview of each. Tiles with more than one look have a select on their row to pick it.
+
 - **Start** (`start`): the Windows 11 Start logo
 - **Apps** (`apps`): the dock's pinned apps, then other open apps in the order they opened
-- **Music** (`media`): a pill tinted with the album art's colour, with "Title · Artist" and prev/play/next.
+- **Music** (`media`): a pill tinted with the album art's colour, with "Title · Artist" and prev/play/next. Extra large shows the cover, the track over a progress bar, play and skip; Medium the cover, the track and play; Small one play button with the track's progress round it.
 - **Weather** (`weather`): condition, city and temperature on a blue tile.
-- **Clock** (`clock`): It's a clock, what more to say about it.
-- **Claude** (`claude`) and **Codex** (`codex`): session and weekly plan limits with time to reset.
-- **Quick controls** (`controls`): pick its buttons in Settings: Wi-Fi, Bluetooth, VPN, volume (click the bar, or scroll anywhere on the tile) and battery.
-- **Hidden icons** (`tray`): a chevron that opens the notification-area icons in a grid above it.
+- **Clock** (`clock`): It's a clock, what more to say about it. Large has seconds and the date, Medium the time over the weekday and day on a narrow tile, Small only the time, and Small with seconds the time with its seconds.
+- **Date** (`date`): the weekday over the day and month, or, as Day number, a calendar page with the weekday in red over the day.
+- **Claude** (`claude`) and **Codex** (`codex`): session and weekly plan limits with time to reset. Medium shows a letter or three, the time to reset and the share left; Small only the letter and the share left. Cursor's tile has the same three looks.
+- **Cursor** (`cursor`): how much of the plan's included usage is gone, overall and for Auto and the named models, as Cursor's dashboard shows it, read from the sign-in Cursor keeps on this PC.
+- **DeepSeek** (`deepseek`): what's left on your DeepSeek API account. Add your API key under Settings › Feeds & accounts; it's kept encrypted for your Windows account.
+- **Gmail** (`gmail`): unread conversations in your inbox, through the same Google sign-in as the calendar ([setup](docs/google-calendar.md)).
+- **Quick controls** (`controls`): pick its buttons in Settings: Wi-Fi, Bluetooth, VPN, airplane mode, mobile hotspot, volume (click the bar, or scroll anywhere on the tile) and battery. The rest of the tile opens a panel with every app's own volume too.
+- **Tray icons** (`tray`): a chevron that opens the notification-area icons in a grid above it.
 - **Show desktop** (`desktop`): minimises everything, or brings it back (Win+D).
+- **Notifications** (`notifications`): a bell that opens the notification centre (Win+N).
+- **Network speed** (`network`): download and upload speed of the network adapters. Clicking it opens Task Manager.
+- **Light and dark** (`theme`): a sun in light mode and a moon in dark mode. Clicking it switches Windows apps and the taskbar over, and the two spin round as they swap.
+- **Day, month, year** (`progress`): how much of today, this month and this year has gone by, as three rings.
+- **Mute and deafen** (`mic`): two buttons, lit red while on: mute every microphone, and mute the speakers.
 - **Input language** (`lang`): the keyboard layout of the window in front, like ENG / US. Clicking it opens Windows' language switcher (Win+Space).
 
 ## Downloads

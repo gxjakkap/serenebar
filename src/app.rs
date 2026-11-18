@@ -108,7 +108,7 @@ struct PanelWin {
     g: gfx::Gfx,
     st: panel::State,
     hits: Vec<panel::Hit>,
-    dragging: bool, // the volume slider has the mouse
+    dragging: Option<Action>, // the volume slider that has the mouse
     opened: Instant,
 }
 
@@ -305,6 +305,10 @@ impl Bar {
     }
 
     fn load_icons(&self, d: &ui::Data) {
+        let art_id = d.media.as_ref().map_or(0, |m| m.art_id);
+        self.g.image("art", art_id, |g| {
+            d.art.as_ref().and_then(|b| g.bitmap_from_bytes(b))
+        });
         let px = ui::icon_px(self.k());
         for a in &d.apps {
             self.g.image(a.key(), px as u64, |g| {
@@ -625,6 +629,7 @@ struct App {
     app_order: Vec<String>,   // first-seen order of unpinned apps
     start_left: Option<bool>, // Start menu alignment last applied
     cpu_prev: (u64, u64),
+    net_prev: Option<(Instant, u64, u64)>, // when the network counters were last read
     art_id: u64,
     tx: Sender<Cmd>,
     feeds: Sender<feeds::Msg>,
@@ -681,6 +686,8 @@ fn feed_config(s: &Settings) -> FeedConfig {
         calendar: s.calendar.clone(),
         google_id: s.google_id.clone(),
         google_secret: s.google_secret.clone(),
+        deepseek_key: s.deepseek_key.clone(),
+        antigravity: s.shows(Widget::Antigravity),
     }
 }
 
@@ -776,6 +783,7 @@ impl App {
         self.d.cpu = system::cpu(&mut self.cpu_prev);
         self.d.mem = system::mem();
         self.d.battery = system::battery();
+        self.read_network();
         if self.bars.iter().all(|b| b.app_drag.is_none()) {
             self.d.apps = apps::apps(
                 &self.pinned,
@@ -786,12 +794,26 @@ impl App {
         }
         self.d.tray = tray::icons();
         self.d.volume = controls::volume();
+        let mixer = self
+            .panel
+            .as_ref()
+            .is_some_and(|p| p.st.kind == Panel::Controls);
+        self.d.app_volumes = if mixer {
+            controls::app_volumes()
+        } else {
+            vec![]
+        };
+        self.d.mic = controls::mic_muted();
+        self.d.light = system::light_theme();
         self.d.lang = system::input_language();
         self.d.now = crate::dates::unix_now();
         self.d.time = system::local_time();
         let f = feeds::snapshot();
         (self.d.weather, self.d.events, self.d.claude, self.d.codex) =
             (f.weather, f.events, f.claude, f.codex);
+        (self.d.antigravity, self.d.deepseek, self.d.cursor) =
+            (f.antigravity, f.deepseek, f.cursor);
+        (self.d.gmail, self.d.google) = (f.gmail, google::connected());
         (self.d.update, self.d.update_note, self.installer) =
             (f.update, f.update_note, f.installer);
         self.d.weather_w = self.d.weather.as_ref().map_or(0.0, |wx| {
@@ -809,15 +831,34 @@ impl App {
         if id != self.art_id {
             self.art_id = id;
             self.d.art_tint = c.art.as_ref().and_then(|b| self.bars[0].g.average_color(b));
+            self.d.art = c.art.clone();
         }
         (self.d.media, self.d.wifi, self.d.bluetooth, self.d.vpn) =
             (c.media, c.wifi, c.bluetooth, c.vpn);
+        (self.d.airplane, self.d.hotspot) = (c.airplane, c.hotspot);
         let n = self.d.apps.len() + 1;
         for b in &mut self.bars {
             b.load_icons(&self.d);
             b.slide.resize(self.d.apps.len(), 0.0);
             b.mag.resize(n, 1.0);
             b.mag_target.resize(n, 1.0);
+        }
+    }
+
+    /// Speeds from the counters' change since the last reading, at most twice a second.
+    fn read_network(&mut self) {
+        let Some((rx, tx)) = crate::net::counters() else {
+            return;
+        };
+        let now = Instant::now();
+        match self.net_prev {
+            Some((t, _, _)) if now.duration_since(t).as_secs_f64() < 0.5 => {}
+            Some((t, prx, ptx)) => {
+                let dt = now.duration_since(t).as_secs_f64();
+                self.d.net = Some((crate::net::rate(prx, rx, dt), crate::net::rate(ptx, tx, dt)));
+                self.net_prev = Some((now, rx, tx));
+            }
+            None => self.net_prev = Some((now, rx, tx)),
         }
     }
 
@@ -892,6 +933,13 @@ impl App {
             moving |= b.anim_step(&self.s, &self.d, self.started);
         }
         self.align_start();
+        if self
+            .d
+            .theme_swap
+            .is_some_and(|t| t.elapsed().as_secs_f32() < ui::THEME_SWAP + 0.05)
+        {
+            moving = true;
+        }
         if self.panel.as_ref().is_some_and(|p| still_opening(p.opened)) {
             moving = true;
             self.draw_panel();
@@ -915,6 +963,7 @@ impl App {
             Action::Start => system::press_keys(&[VK_LWIN]),
             Action::Language => system::press_keys(&[VK_LWIN, VK_SPACE]),
             Action::ShowDesktop => system::press_keys(&[VK_LWIN, VK_D]),
+            Action::Notifications => system::press_keys(&[VK_LWIN, VK_N]),
             Action::QuickSettings => system::press_keys(&[VK_LWIN, VK_A]), // Action Center on Windows 10
             Action::SystemSettings => system::open("ms-settings:"),
             Action::SettingsFolder => {
@@ -923,6 +972,8 @@ impl App {
                 }
             }
             Action::TaskManager => system::open("taskmgr.exe"),
+            Action::DeepSeek => system::open("https://platform.deepseek.com/usage"),
+            Action::Gmail => system::open("https://mail.google.com/"),
             // the release page when its installer couldn't be fetched or checked
             Action::Update => match (&self.installer, &self.d.update) {
                 (Some(_), _) => self.install(),
@@ -952,7 +1003,25 @@ impl App {
             Action::Vpn => {
                 let _ = self.tx.send(Cmd::Vpn);
             }
+            Action::Airplane => {
+                let _ = self.tx.send(Cmd::Airplane);
+            }
+            Action::Hotspot => {
+                let _ = self.tx.send(Cmd::Hotspot);
+            }
             Action::Mute => controls::toggle_mute(),
+            Action::Mic => controls::toggle_mic(),
+            Action::AppMute(i) => {
+                if let Some(a) = self.d.app_volumes.get(i) {
+                    controls::toggle_app_mute(&a.name);
+                }
+            }
+            Action::AppVolume(_) => {} // dragged in the panel
+            Action::Theme => {
+                system::toggle_theme();
+                self.d.theme_swap = Some(Instant::now());
+                self.animate();
+            }
             Action::Volume => {
                 self.set_volume(frac);
                 return;
@@ -980,6 +1049,9 @@ impl App {
         // anchored over its tile; panels without one (About) open over the middle of the bar
         let (hx, hw) = ui::hit_span(&b.hits, Action::Open(kind))
             .unwrap_or((0.0, (bar.right - bar.left) as f32 / k));
+        if kind == Panel::Controls {
+            self.d.app_volumes = controls::app_volumes();
+        }
         let (pw, ph) = panel::size(kind, &self.d);
         let (w, h) = ((pw * k).ceil() as i32, (ph * k).ceil() as i32);
         let gap = (10.0 * k) as i32;
@@ -1002,13 +1074,14 @@ impl App {
         ) else {
             return;
         };
-        let st = panel::State::new(kind, self.d.time);
+        let mut st = panel::State::new(kind, self.d.time);
+        st.app_rows = self.d.app_volumes.len().min(panel::APP_ROWS);
         self.panel = Some(PanelWin {
             hwnd,
             g,
             st,
             hits: vec![],
-            dragging: false,
+            dragging: None,
             opened: Instant::now(),
         });
         self.show(hwnd);
@@ -1061,11 +1134,22 @@ impl App {
         ui::hit_test(&p.hits, x as f32 / p.g.k, y as f32 / p.g.k)
     }
 
-    /// Sets the volume from where the cursor is along the slider, even outside it while dragging.
+    /// Sets the volume from where the cursor is along the slider being dragged, even outside it.
     fn panel_volume(&mut self, lp: LPARAM) {
         let Some(p) = &self.panel else { return };
-        if let Some(level) = panel::volume_at(&p.hits, xy(lp).0 as f32 / p.g.k) {
-            self.set_volume(level);
+        let Some(act) = p.dragging else { return };
+        let Some(level) = panel::volume_at(&p.hits, act, xy(lp).0 as f32 / p.g.k) else {
+            return;
+        };
+        match act {
+            Action::AppVolume(i) => {
+                if let Some(a) = self.d.app_volumes.get(i) {
+                    controls::set_app_volume(&a.name, level);
+                }
+                self.d.app_volumes = controls::app_volumes();
+                self.draw_panel();
+            }
+            _ => self.set_volume(level),
         }
     }
 
@@ -1077,9 +1161,11 @@ impl App {
     }
 
     fn panel_press(&mut self, lp: LPARAM) {
-        if let Some((panel::Act::Do(Action::Volume), _)) = self.panel_hit(lp) {
+        if let Some((panel::Act::Do(a @ (Action::Volume | Action::AppVolume(_))), _)) =
+            self.panel_hit(lp)
+        {
             if let Some(p) = &mut self.panel {
-                p.dragging = true;
+                p.dragging = Some(a);
                 unsafe {
                     SetCapture(p.hwnd);
                 }
@@ -1089,7 +1175,7 @@ impl App {
     }
 
     fn panel_move(&mut self, lp: LPARAM) {
-        if self.panel.as_ref().is_some_and(|p| p.dragging) {
+        if self.panel.as_ref().is_some_and(|p| p.dragging.is_some()) {
             self.panel_volume(lp);
             return;
         }
@@ -1119,8 +1205,8 @@ impl App {
     }
 
     fn panel_click(&mut self, lp: LPARAM) {
-        if let Some(p) = self.panel.as_mut().filter(|p| p.dragging) {
-            p.dragging = false;
+        if let Some(p) = self.panel.as_mut().filter(|p| p.dragging.is_some()) {
+            p.dragging = None;
             unsafe {
                 let _ = ReleaseCapture();
             }
@@ -1137,7 +1223,7 @@ impl App {
         match act {
             panel::Act::Close => self.close_panel(),
             panel::Act::TrayIcon(i) => self.tray_click(i, false),
-            panel::Act::Do(Action::Volume) => {} // the press already set it
+            panel::Act::Do(Action::Volume | Action::AppVolume(_)) => {} // the press set it
             // anything that opens another window takes the focus, which closes the panel
             panel::Act::Do(a) => self.act(a, frac),
             _ => {}
@@ -1213,7 +1299,7 @@ impl App {
         let (o, sc, dy) = opening(p.opened);
         p.g.begin();
         p.g.push_fade(o, sc, w / 2.0, h / 2.0, dy);
-        p.hits = prefs::draw(&p.g, &p.st, &self.s, flags, w, h);
+        p.hits = prefs::draw(&p.g, &p.st, &self.s, &self.d, flags, w, h);
         p.g.pop_fade();
         p.g.end();
     }
@@ -1337,16 +1423,18 @@ impl App {
                 self.change(|s| s.widgets = widgets);
             }
             Act::Add(group) => {
+                if let Some(p) = &mut self.prefs {
+                    p.st.open_picker(group);
+                }
+            }
+            Act::ClosePicker => {
+                if let Some(p) = &mut self.prefs {
+                    p.st.picker = None;
+                }
+            }
+            Act::AddWidget(i) => {
                 let Some(p) = &mut self.prefs else { return };
-                let hidden: Vec<usize> =
-                    (0..p.st.rows.len()).filter(|&i| !p.st.rows[i].on).collect();
-                let cmd = popup_menu(p.hwnd, true, |m| unsafe {
-                    for (n, &i) in hidden.iter().enumerate() {
-                        let label = HSTRING::from(p.st.rows[i].widget.label());
-                        let _ = AppendMenuW(m, MF_STRING, n + 1, &label);
-                    }
-                });
-                let Some(&i) = (cmd as usize).checked_sub(1).and_then(|n| hidden.get(n)) else {
+                let Some(group) = p.st.picker.take() else {
                     return;
                 };
                 p.st.add(i, group);
@@ -1368,10 +1456,26 @@ impl App {
             }
             Act::Tab(t) => {
                 if let Some(p) = &mut self.prefs {
-                    p.st.tab = t
+                    (p.st.tab, p.st.picker) = (t, None);
                 }
             }
             Act::Drag(_) => {}
+            Act::Variant(i) => {
+                let Some(p) = &self.prefs else { return };
+                let Some(w) = p.st.rows.get(i).map(|r| r.widget) else {
+                    return;
+                };
+                let (all, now) = (w.variants(), self.s.variant(w));
+                let cmd = popup_menu(p.hwnd, true, |m| unsafe {
+                    for (n, x) in all.iter().enumerate() {
+                        let flags = if *x == now { MF_CHECKED } else { MF_UNCHECKED };
+                        let _ = AppendMenuW(m, flags, n + 1, &HSTRING::from(x.label()));
+                    }
+                });
+                if let Some(&x) = (cmd as usize).checked_sub(1).and_then(|n| all.get(n)) {
+                    self.change(|s| s.set_variant(w, x));
+                }
+            }
             Act::About => self.toggle_panel(Panel::About),
             Act::GoogleSignIn => google::sign_in(
                 self.s.google_id.clone(),
@@ -1410,11 +1514,24 @@ impl App {
         self.draw_prefs();
     }
 
+    /// The wheel scrolls the widget picker, a notch at a time.
+    fn prefs_wheel(&mut self, wp: WPARAM) {
+        let Some(p) = self.prefs.as_mut().filter(|p| p.st.picker.is_some()) else {
+            return;
+        };
+        let notches = ((wp.0 >> 16) & 0xFFFF) as i16 as f32 / 120.0;
+        let h = p.g.h as f32 / p.g.k;
+        p.st.scroll_picker(-notches * 64.0, h);
+        self.draw_prefs();
+    }
+
     fn prefs_key(&mut self, vk: u16) {
         let Some(p) = &mut self.prefs else { return };
         if vk == VK_ESCAPE.0 {
             if p.st.focus.is_some() {
                 self.commit_field();
+            } else if p.st.picker.take().is_some() {
+                self.draw_prefs();
             } else {
                 self.close_prefs();
             }
@@ -1861,6 +1978,7 @@ extern "system" fn prefs_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> L
         WM_MOUSELEAVE => with_app(|a| a.leave_popup()),
         WM_LBUTTONUP => with_app(|a| a.prefs_click(lp)),
         WM_CHAR => with_app(|a| a.prefs_char(wp.0 as u32)),
+        WM_MOUSEWHEEL => with_app(|a| a.prefs_wheel(wp)),
         WM_KEYDOWN => with_app(|a| a.prefs_key(wp.0 as u16)),
         WM_ACTIVATE if (wp.0 & 0xFFFF) as u32 == WA_INACTIVE => with_app(|a| a.commit_field()),
         WM_CLOSE => with_app(|a| a.close_prefs()),
@@ -1916,6 +2034,7 @@ pub fn main() -> Result<()> {
             app_order: vec![],
             start_left: None,
             cpu_prev: (0, 0),
+            net_prev: None,
             art_id: 0,
             tx: controls::spawn_winrt(hwnd),
             feeds: feeds::spawn_feeds(hwnd),

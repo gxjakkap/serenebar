@@ -2,10 +2,10 @@
 use crate::dates::LocalTime;
 use crate::dock::MAG;
 use crate::gfx::{rgba, Align, Gfx, C};
-use crate::limits::{Limit, Window};
+use crate::limits::Limit;
 use crate::settings::{
-    dark_text_on, Control, Settings, Size, Slot, Style, Widget, ACCENTS, ACCENT_TEXT, DANGER_TEXT,
-    GROUPS,
+    dark_text_on, Control, Settings, Size, Slot, Style, Variant, Widget, ACCENTS, ACCENT_TEXT,
+    DANGER_TEXT, GROUPS,
 };
 use crate::tray::TrayIcon;
 use crate::weather::Weather;
@@ -137,16 +137,25 @@ pub fn tip(act: Action, d: &Data) -> Option<String> {
     let playing = d.media.as_ref().is_some_and(|m| m.playing);
     Some(match act {
         Action::Start => "Start".into(),
-        Action::Open(Panel::Tray) => "Hidden icons".into(),
+        Action::Open(Panel::Tray) => "Tray icons".into(),
         Action::ShowDesktop => "Show desktop".into(),
+        Action::Notifications => "Notifications".into(),
         Action::Wifi => radio("Wi-Fi"),
         Action::Bluetooth => radio("Bluetooth"),
         Action::Vpn => radio("VPN"),
+        Action::Airplane => radio("Airplane mode"),
+        Action::Hotspot => radio("Mobile hotspot"),
         Action::Prev => "Previous".into(),
         Action::Toggle if playing => "Pause".into(),
         Action::Toggle => "Play".into(),
         Action::Next => "Next".into(),
         Action::TaskManager => "Task Manager".into(),
+        Action::Mic if d.mic == Some(true) => "Microphone muted".into(),
+        Action::Mic => "Mute microphone".into(),
+        Action::Mute if d.volume.as_ref().is_some_and(|v| v.muted) => "Sound muted".into(),
+        Action::Mute => "Mute sound".into(),
+        Action::Theme if d.light == Some(false) => "Light mode".into(),
+        Action::Theme => "Dark mode".into(),
         _ => return None,
     })
 }
@@ -157,6 +166,8 @@ pub enum Panel {
     Calendar,
     Claude,
     Codex,
+    Antigravity,
+    Cursor,
     Controls,
     About,
     Tray,
@@ -174,15 +185,24 @@ pub enum Action {
     Wifi,
     Bluetooth,
     Vpn,
-    Mute,
+    Airplane,
+    Hotspot,
+    Mute, // the speakers: deafen
+    Mic,
+    Theme,
     Volume,
+    AppVolume(usize), // an app's slider in the quick controls panel
+    AppMute(usize),
     Settings,
     Language,
     ShowDesktop,
     QuickSettings,
     SystemSettings,
     SettingsFolder,
-    Update, // opens the newer release's page
+    Update,   // opens the newer release's page
+    DeepSeek, // opens DeepSeek's usage page
+    Gmail,
+    Notifications,
 }
 
 #[derive(Default)]
@@ -193,16 +213,29 @@ pub struct Data {
     pub apps: Vec<crate::apps::AppItem>,
     pub media: Option<crate::controls::Media>,
     pub art_tint: Option<C>,
+    pub art: Option<std::sync::Arc<Vec<u8>>>, // the cover, encoded; drawn from each bar's cache as "art"
     pub weather: Option<Weather>,
     pub weather_w: f32, // label/city column plus temperature, measured at scale 1
     pub events: Vec<crate::calendar::Event>,
     pub claude: Option<Vec<Limit>>,
     pub codex: Option<Vec<Limit>>,
-    pub update: Option<crate::update::Release>, // a newer release than this build
-    pub update_note: &'static str,              // how a check from Settings went
+    pub antigravity: Option<Vec<Limit>>,
+    pub deepseek: Option<Vec<crate::limits::Balance>>,
+    pub cursor: Option<Vec<Limit>>,
+    pub gmail: Option<Result<u32, &'static str>>, // unread, or what to show instead
+    pub google: bool,                             // signed in with Google
+    pub update: Option<crate::update::Release>,   // a newer release than this build
+    pub update_note: &'static str,                // how a check from Settings went
     pub volume: Option<crate::controls::Volume>,
+    pub app_volumes: Vec<crate::controls::AppVolume>, // read only while the controls panel is open
+    pub mic: Option<bool>,                            // muted; None without a microphone
+    pub net: Option<(f64, f64)>,                      // bytes per second down and up
+    pub theme_swap: Option<std::time::Instant>,       // when the light/dark button was last clicked
+    pub light: Option<bool>,                          // Windows apps are in light mode
     pub wifi: Option<bool>,
     pub vpn: Option<bool>,
+    pub airplane: Option<bool>,
+    pub hotspot: Option<bool>,
     pub lang: Option<(String, String)>,
     pub bluetooth: Option<bool>,
     pub tray: Vec<TrayIcon>,
@@ -328,12 +361,32 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
     Some(match w {
         Widget::Start => icons_w(v, 0..1),
         Widget::Apps if !d.apps.is_empty() => icons_w(v, 1..d.apps.len() + 1),
-        Widget::Media => 196.0 * k,
+        Widget::Media => match v.s.variant(w) {
+            Variant::ExtraLarge => 236.0 * k,
+            Variant::Medium => 184.0 * k,
+            Variant::Small => 46.0 * k,
+            _ => 196.0 * k,
+        },
         Widget::Weather => (WEATHER_PAD + d.weather_w).max(150.0) * k,
-        Widget::Clock => 100.0 * k,
-        Widget::DateClock => 56.0 * k,
-        Widget::Claude if d.claude.is_some() => 196.0 * k,
-        Widget::Codex if d.codex.is_some() => 196.0 * k,
+        Widget::Date if v.s.variant(w) == Variant::DayNumber => 46.0 * k,
+        Widget::Date => 128.0 * k, // room for "September 30"
+        Widget::Clock => match v.s.variant(w) {
+            Variant::Small if v.s.clock24 => 64.0 * k,
+            Variant::Small => 84.0 * k,
+            Variant::SmallSeconds if v.s.clock24 => 84.0 * k,
+            Variant::SmallSeconds => 104.0 * k,
+            Variant::Medium => 56.0 * k,
+            _ => 100.0 * k,
+        },
+        Widget::Claude | Widget::Codex | Widget::Antigravity | Widget::Cursor
+            if d.limits(ai_panel(w)).is_some() =>
+        {
+            match v.s.variant(w) {
+                Variant::Medium => 144.0 * k,
+                Variant::Small => 88.0 * k,
+                _ => 196.0 * k,
+            }
+        }
         Widget::Controls => {
             let w: f32 = v.s.controls.iter().map(|&c| control_w(c, d)).sum();
             if w == 0.0 {
@@ -342,12 +395,21 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
             (w + 8.0) * k
         }
         Widget::Lang if d.lang.is_some() => 46.0 * k,
-        Widget::Tray | Widget::Desktop => 24.0 * k,
+        Widget::Tray | Widget::Desktop | Widget::Theme | Widget::Notifications => 24.0 * k,
         Widget::System => 96.0 * k,
+        Widget::Mic => 68.0 * k,
+        Widget::Network => 92.0 * k,
+        Widget::Progress => 140.0 * k,
+        Widget::DeepSeek => 132.0 * k,
+        Widget::Gmail => 120.0 * k,
         Widget::Battery if d.battery.is_some() => 56.0 * k,
-        Widget::Apps | Widget::Claude | Widget::Codex | Widget::Lang | Widget::Battery => {
-            return None
-        }
+        Widget::Apps
+        | Widget::Claude
+        | Widget::Codex
+        | Widget::Antigravity
+        | Widget::Cursor
+        | Widget::Lang
+        | Widget::Battery => return None,
     })
 }
 
@@ -537,50 +599,62 @@ pub fn draw_tiles(g: &Gfx, v: &View, d: &Data, full_w: Option<f32>) -> Vec<Hit<A
         let p = ((v.intro - POP_DELAY - POP_STAGGER * i as f32) / POP).clamp(0.0, 1.0);
         if p > 0.0 {
             g.set_transform(about(ease_out_back(p), x + w / 2.0, y + h / 2.0, v));
-            match widget {
-                Widget::Start => icons(g, v, d, x, y, h, 0..1, &mut hits),
-                Widget::Apps => icons(g, v, d, x, y, h, 1..d.apps.len() + 1, &mut hits),
-                Widget::Media => media(g, v, d, x, y, w, h, &mut hits),
-                Widget::Weather => weather(g, v, d, x, y, w, h, &mut hits),
-                Widget::Clock => clock(g, v, d, x, y, w, h, &mut hits),
-                Widget::DateClock => dateclock(g, v, d, x, y, w, h, &mut hits),
-                Widget::Claude => ai(
-                    g,
-                    v,
-                    Panel::Claude,
-                    d.claude.as_deref().unwrap_or(&[]),
-                    d.now,
-                    x,
-                    y,
-                    w,
-                    h,
-                    &mut hits,
-                ),
-                Widget::Codex => ai(
-                    g,
-                    v,
-                    Panel::Codex,
-                    d.codex.as_deref().unwrap_or(&[]),
-                    d.now,
-                    x,
-                    y,
-                    w,
-                    h,
-                    &mut hits,
-                ),
-                Widget::Controls => controls(g, v, d, x, y, w, h, &mut hits),
-                Widget::Lang => lang(g, v, d, x, y, w, h, &mut hits),
-                Widget::Tray => tray(g, v, x, y, w, h, &mut hits),
-                Widget::Desktop => desktop(g, v, x, y, w, h, &mut hits),
-                Widget::System => system(g, v, d, x, y, w, h, &mut hits),
-                Widget::Battery => battery(g, v, d, x, y, w, h),
-            }
+            draw_tile(g, v, d, widget, x, y, w, h, &mut hits);
         }
     }
     g.set_transform(about(1.0, 0.0, 0.0, v));
     draw_tip(g, v, &hits, full_w.unwrap_or_else(|| content_width(d, v)));
     g.set_transform(Matrix3x2::identity());
     hits
+}
+
+/// One tile, drawn at (x, y) in the size `tile_w` gives it.
+fn draw_tile(
+    g: &Gfx,
+    v: &View,
+    d: &Data,
+    widget: Widget,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hits: &mut Vec<Hit<Action>>,
+) {
+    match widget {
+        Widget::Start => icons(g, v, d, x, y, h, 0..1, hits),
+        Widget::Apps => icons(g, v, d, x, y, h, 1..d.apps.len() + 1, hits),
+        Widget::Media => match v.s.variant(widget) {
+            Variant::ExtraLarge | Variant::Medium => media_card(g, v, d, x, y, w, h, hits),
+            Variant::Small => media_mini(g, v, d, x, y, w, h, hits),
+            _ => media(g, v, d, x, y, w, h, hits),
+        },
+        Widget::Weather => weather(g, v, d, x, y, w, h, hits),
+        Widget::Date => date(g, v, d, x, y, w, h, hits),
+        Widget::Clock => match v.s.variant(widget) {
+            Variant::Small | Variant::SmallSeconds => small_clock(g, v, d, x, y, w, h, hits),
+            Variant::Medium => medium_clock(g, v, d, x, y, w, h, hits),
+            _ => clock(g, v, d, x, y, w, h, hits),
+        },
+        Widget::Claude | Widget::Codex | Widget::Antigravity | Widget::Cursor => {
+            match v.s.variant(widget) {
+                Variant::Medium | Variant::Small => ai_compact(g, v, d, widget, x, y, w, h, hits),
+                _ => ai(g, v, d, ai_panel(widget), x, y, w, h, hits),
+            }
+        }
+        Widget::Controls => controls(g, v, d, x, y, w, h, hits),
+        Widget::Lang => lang(g, v, d, x, y, w, h, hits),
+        Widget::Tray => tray(g, v, x, y, w, h, hits),
+        Widget::Desktop => desktop(g, v, x, y, w, h, hits),
+        Widget::System => system(g, v, d, x, y, w, h, hits),
+        Widget::Battery => battery(g, v, d, x, y, w, h),
+        Widget::Mic => mic(g, v, d, x, y, w, h, hits),
+        Widget::Network => network(g, v, d, x, y, w, h, hits),
+        Widget::Theme => theme_toggle(g, v, d, x, y, w, h, hits),
+        Widget::Progress => progress(g, v, d, x, y, w, h, hits),
+        Widget::DeepSeek => deepseek(g, v, d, x, y, w, h, hits),
+        Widget::Gmail => gmail(g, v, d, x, y, w, h, hits),
+        Widget::Notifications => notifications(g, v, x, y, w, h, hits),
+    }
 }
 
 /// The name over the hovered control, on the side away from the screen edge, kept over the bar.
@@ -890,8 +964,8 @@ fn clock(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut
     hits.push((x, y, w, h, act));
 }
 
-/// The red tear-off clock from the first version.
-fn dateclock(
+/// Just the time: hours and minutes, and the seconds in the with-seconds look.
+fn small_clock(
     g: &Gfx,
     v: &View,
     d: &Data,
@@ -902,39 +976,88 @@ fn dateclock(
     hits: &mut Vec<Hit<Action>>,
 ) {
     let k = v.m.k;
+    let act = Action::Open(Panel::Calendar);
+    tile(g, v, x, y, w, h, v.hover == Some(act));
     let t = d.time;
-    let r = v.m.r_tile;
-    let split = h * 0.5;
-    g.fill_rr(x, y, w, h, r, rgba(0x111111, 1.0));
-    g.clip(x, y, w, split);
-    g.fill_rr(x, y, w, h, r, rgba(0xEE3800, 1.0));
-    g.unclip();
-    g.stroke_rr(x, y, w, h, r, v.th.tile_border, 1.0);
+    let hour = if v.s.clock24 {
+        t.hour
+    } else {
+        crate::dates::hour12(t.hour)
+    };
+    let hm = format!("{hour}:{:02}", t.minute);
+    // seconds, then AM/PM, in the sub colour like the large clock's seconds
+    let secs = if v.s.variant(Widget::Clock) == Variant::SmallSeconds {
+        format!(":{:02}", t.second)
+    } else {
+        String::new()
+    };
+    let ampm = match (v.s.clock24, t.hour < 12) {
+        (true, _) => "",
+        (false, true) => " AM",
+        (false, false) => " PM",
+    };
+    let tail = format!("{secs}{ampm}");
+    let (big, small) = (font(k, 17.0), font(k, 13.0));
+    let (wb, wt) = (g.measure(&hm, big, 600), g.measure(&tail, small, 500));
+    let x0 = x + (w - wb - wt) / 2.0;
+    g.text(&hm, x0, y, wb + 1.0, h, big, 600, v.th.text, Align::Left);
+    // nudged down to sit near the big digits' baseline
+    let ty = y + 1.5 * k;
+    g.text(
+        &tail,
+        x0 + wb,
+        ty,
+        wt + 1.0,
+        h,
+        small,
+        500,
+        v.th.sub,
+        Align::Left,
+    );
+    hits.push((x, y, w, h, act));
+}
+
+/// The time over the weekday and day, on a narrow tile.
+fn medium_clock(
+    g: &Gfx,
+    v: &View,
+    d: &Data,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hits: &mut Vec<Hit<Action>>,
+) {
+    let k = v.m.k;
+    let act = Action::Open(Panel::Calendar);
+    tile(g, v, x, y, w, h, v.hover == Some(act));
+    let t = d.time;
     // no AM/PM here: the tile is too narrow
     let time = if v.s.clock24 {
         format!("{:02}:{:02}", t.hour, t.minute)
     } else {
         format!("{}:{:02}", crate::dates::hour12(t.hour), t.minute)
     };
+    let half = h / 2.0;
     g.text(
         &time,
         x,
-        y + 1.0 * k,
+        y + 3.0 * k,
         w,
-        split,
+        half,
         font(k, 15.0),
-        500,
-        rgba(0x2A0E02, 0.92),
+        600,
+        v.th.text,
         Align::Center,
     );
     // weekday and day on one line: at 10 DIPs there's no room to stack them
-    let (by, bh) = (y + split, h - split);
+    let (by, bh) = (y + half - 1.0 * k, half);
     let wd = crate::dates::day_name(crate::dates::weekday(t.days()));
     let day = t.day.to_string();
     let (fw, fd) = (font(k, 10.0), font(k, 12.0));
     let (ww, dw, sp) = (g.measure(wd, fw, 500), g.measure(&day, fd, 600), 3.0 * k);
     let x0 = x + (w - ww - sp - dw) / 2.0;
-    g.text(wd, x0, by, ww + 1.0, bh, fw, 500, white(0.75), Align::Left);
+    g.text(wd, x0, by, ww + 1.0, bh, fw, 500, v.th.sub, Align::Left);
     g.text(
         &day,
         x0 + ww + sp,
@@ -943,10 +1066,10 @@ fn dateclock(
         bh,
         fd,
         600,
-        white(1.0),
+        v.th.text,
         Align::Left,
     );
-    hits.push((x, y, w, h, Action::Open(Panel::Calendar)));
+    hits.push((x, y, w, h, act));
 }
 
 pub fn limit_color(pct: f32) -> C {
@@ -962,41 +1085,166 @@ pub fn limit_color(pct: f32) -> C {
     )
 }
 
-/// Claude: an orange square with a starburst. Codex: a white square with a hexagon.
+/// The panel an AI limits tile opens.
+fn ai_panel(w: Widget) -> Panel {
+    match w {
+        Widget::Codex => Panel::Codex,
+        Widget::Antigravity => Panel::Antigravity,
+        Widget::Cursor => Panel::Cursor,
+        _ => Panel::Claude,
+    }
+}
+
+/// The AI labs' own marks, drawn on their brand colours.
+const BRANDS: [(&str, &[u8]); 4] = [
+    ("brand:claude", include_bytes!("../icons/brands/claude.png")),
+    ("brand:openai", include_bytes!("../icons/brands/openai.png")),
+    ("brand:cursor", include_bytes!("../icons/brands/cursor.png")),
+    (
+        "brand:deepseek",
+        include_bytes!("../icons/brands/deepseek.png"),
+    ),
+];
+
+/// A brand's mark, `inset` of the way in from each side of an `s` square at (x, y), on a
+/// rounded square of `bg`. The mark keeps its own shape; the square only frames it.
+fn brand(g: &Gfx, i: usize, bg: C, inset: f32, x: f32, y: f32, s: f32) {
+    let (key, bytes) = BRANDS[i];
+    g.image(key, 1, |g| g.bitmap_from_bytes(bytes));
+    g.fill_rr(x, y, s, s, s * 0.24, bg);
+    let Some(b) = g.cached(key) else { return };
+    let size = unsafe { b.GetSize() };
+    let box_ = s * (1.0 - 2.0 * inset);
+    let f = box_ / size.width.max(size.height);
+    let (w, h) = (size.width * f, size.height * f);
+    g.bitmap(&b, x + (s - w) / 2.0, y + (s - h) / 2.0, w, h);
+}
+
+/// Gemini's four-pointed star in an `s` square at (x, y): Google's path, whose sides are arcs
+/// of radius 8.522 on a 16 square, centred just outside each corner, in its purple-to-cyan.
+fn gemini_star(g: &Gfx, x: f32, y: f32, s: f32) {
+    let (r, out) = (8.522_f32, 0.52_f32); // the arcs, and how far past the corner they're centred
+    let k = s / 16.0;
+    // each side runs from one tip to the next, bowed in towards the middle
+    let tips = [(16.0, 8.0), (8.0, 16.0), (0.0, 8.0), (8.0, 0.0)];
+    let corners = [
+        (16.0 + out, 16.0 + out),
+        (-out, 16.0 + out),
+        (-out, -out),
+        (16.0 + out, -out),
+    ];
+    let mut pts = vec![];
+    for i in 0..4 {
+        let ((ax, ay), (bx, by), (cx, cy)) = (tips[i], tips[(i + 1) % 4], corners[i]);
+        let (a0, a1) = ((ay - cy).atan2(ax - cx), (by - cy).atan2(bx - cx));
+        // the short way round from one tip to the next
+        let mut da = a1 - a0;
+        if da > PI {
+            da -= 2.0 * PI;
+        } else if da < -PI {
+            da += 2.0 * PI;
+        }
+        for j in 0..12 {
+            let a = a0 + da * j as f32 / 12.0;
+            pts.push((x + (cx + r * a.cos()) * k, y + (cy + r * a.sin()) * k));
+        }
+    }
+    let stops = [
+        (0.07, rgba(0x9168C0, 1.0)),
+        (0.34, rgba(0x5684D1, 1.0)),
+        (0.67, rgba(0x1BA1E3, 1.0)),
+    ];
+    g.poly_grad(&pts, &stops, (x, y + s), (x + s, y));
+}
+
+/// Claude on its orange, OpenAI's knot for Codex on black, Cursor's cube on white, and for
+/// Antigravity, Gemini's star on white.
 pub fn ai_logo(g: &Gfx, which: Panel, x: f32, y: f32, s: f32) {
-    let (cx, cy) = (x + s / 2.0, y + s / 2.0);
-    if which == Panel::Claude {
-        g.fill_rr(x, y, s, s, s * 0.24, rgba(0xD97757, 1.0));
-        for i in 0..8 {
-            let a = i as f32 * PI / 4.0 + 0.2;
-            g.line(
-                cx + a.sin() * s * 0.07,
-                cy - a.cos() * s * 0.07,
-                cx + a.sin() * s * 0.31,
-                cy - a.cos() * s * 0.31,
-                white(1.0),
-                s * 0.085,
+    match which {
+        Panel::Claude => brand(g, 0, rgba(0xD97757, 1.0), 0.2, x, y, s),
+        Panel::Codex => brand(g, 1, rgba(0x0D0D0D, 1.0), 0.18, x, y, s),
+        Panel::Cursor => brand(g, 2, white(1.0), 0.2, x, y, s),
+        _ => {
+            g.fill_rr(x, y, s, s, s * 0.24, white(1.0));
+            gemini_star(g, x + s * 0.18, y + s * 0.18, s * 0.64);
+        }
+    }
+}
+
+/// The medium and small AI tiles: a short label and the share left of each of the first two
+/// limits, with the time to reset between them on the medium one.
+fn ai_compact(
+    g: &Gfx,
+    v: &View,
+    d: &Data,
+    widget: Widget,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hits: &mut Vec<Hit<Action>>,
+) {
+    let (k, which) = (v.m.k, ai_panel(widget));
+    let medium = v.s.variant(widget) == Variant::Medium;
+    let act = Action::Open(which);
+    tile(g, v, x, y, w, h, v.hover == Some(act));
+    ai_logo(g, which, x + 6.0 * k, y + (h - 30.0 * k) / 2.0, 30.0 * k);
+    let f = font(k, 10.0);
+    let (lx, right) = (x + 42.0 * k, x + w - 7.0 * k);
+    let pct_w = g.measure("100%", f, 600);
+    for (row, l) in d.limits(which).unwrap_or(&[]).iter().take(2).enumerate() {
+        let (ry, rh) = (y + 6.0 * k + row as f32 * 18.0 * k, 16.0 * k);
+        let label = if medium {
+            l.window.abbr()
+        } else {
+            l.window.letter()
+        };
+        g.text(label, lx, ry, 28.0 * k, rh, f, 700, v.th.text, Align::Left);
+        let left = format!("{:.0}%", (100.0 - l.pct).clamp(0.0, 100.0));
+        g.text(
+            &left,
+            right - pct_w,
+            ry,
+            pct_w,
+            rh,
+            f,
+            600,
+            limit_text(v, l.pct),
+            Align::Right,
+        );
+        if let (true, Some(r)) = (medium, l.resets) {
+            let t = crate::dates::fmt_left(r - d.now);
+            let tx = lx + 26.0 * k;
+            g.text(
+                &t,
+                tx,
+                ry,
+                right - pct_w - 4.0 * k - tx,
+                rh,
+                f,
+                500,
+                v.th.sub,
+                Align::Left,
             );
         }
+    }
+    hits.push((x, y, w, h, act));
+}
+
+/// The share left, in the bar's text colour until it runs low.
+fn limit_text(v: &View, used: f32) -> C {
+    if used >= 90.0 {
+        rgba(0xFF453A, 1.0)
     } else {
-        g.fill_rr(x, y, s, s, s * 0.24, white(1.0));
-        let p = |i: usize| {
-            let a = i as f32 * PI / 3.0;
-            (cx + a.sin() * s * 0.27, cy - a.cos() * s * 0.27)
-        };
-        for i in 0..6 {
-            let ((x0, y0), (x1, y1)) = (p(i), p(i + 1));
-            g.line(x0, y0, x1, y1, rgba(0x111111, 1.0), s * 0.08);
-        }
+        v.th.text
     }
 }
 
 fn ai(
     g: &Gfx,
     v: &View,
+    d: &Data,
     which: Panel,
-    limits: &[Limit],
-    now: i64,
     x: f32,
     y: f32,
     w: f32,
@@ -1007,12 +1255,14 @@ fn ai(
     let act = Action::Open(which);
     tile(g, v, x, y, w, h, v.hover == Some(act));
     ai_logo(g, which, x + 6.0 * k, y + (h - 30.0 * k) / 2.0, 30.0 * k);
+    // the first two limits, which every source lists first: session and week, or the month
+    let (limits, now) = (d.limits(which).unwrap_or(&[]), d.now);
+    let rows: Vec<&Limit> = limits.iter().take(2).collect();
     // columns fit their widest text, so the 10 DIP floor never cuts a label short
-    let rows = [Window::Session, Window::Weekly];
     let f = font(k, 10.0);
     let label_w = rows
         .iter()
-        .map(|r| g.measure(r.label(), f, 600))
+        .map(|r| g.measure(r.window.short(), f, 600))
         .fold(0.0, f32::max)
         + 4.0 * k;
     let (pct_w, reset_w, sp) = (
@@ -1024,13 +1274,10 @@ fn ai(
     let pct_x = x + w - 6.0 * k - pct_w;
     let reset_x = pct_x - sp - reset_w;
     let (bx, bw) = (lx + label_w, (reset_x - sp - lx - label_w).max(0.0));
-    for (row, window) in rows.into_iter().enumerate() {
-        let Some(l) = limits.iter().find(|l| l.window == window) else {
-            continue;
-        };
+    for (row, l) in rows.into_iter().enumerate() {
         let (ry, rh) = (y + 6.0 * k + row as f32 * 18.0 * k, 16.0 * k);
         g.text(
-            window.label(),
+            l.window.short(),
             lx,
             ry,
             label_w,
@@ -1079,41 +1326,100 @@ fn ai(
 }
 
 impl Data {
-    /// Whether the Wi-Fi, Bluetooth or VPN behind `act` is on. None when it can't be told.
+    /// What an AI limits panel shows. None until its source has answered.
+    pub fn limits(&self, p: Panel) -> Option<&[Limit]> {
+        match p {
+            Panel::Claude => self.claude.as_deref(),
+            Panel::Codex => self.codex.as_deref(),
+            Panel::Antigravity => self.antigravity.as_deref(),
+            Panel::Cursor => self.cursor.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Whether the radio, VPN, airplane mode or hotspot behind `act` is on. None when it
+    /// can't be told.
     pub fn radio(&self, act: Action) -> Option<bool> {
         match act {
             Action::Wifi => self.wifi,
             Action::Bluetooth => self.bluetooth,
             Action::Vpn => self.vpn,
+            Action::Airplane => self.airplane,
+            Action::Hotspot => self.hotspot,
             _ => None,
         }
     }
 }
 
-/// The Wi-Fi, Bluetooth or VPN glyph for `act`, sized by `s`.
+/// The Wi-Fi, Bluetooth, VPN, airplane or hotspot glyph for `act`, sized by `s`.
 pub fn radio_glyph(g: &Gfx, act: Action, cx: f32, cy: f32, s: f32, c: C) {
     match act {
         Action::Wifi => wifi_glyph(g, cx, cy - s * 0.17, s, c),
         Action::Bluetooth => bluetooth_glyph(g, cx, cy, s * 1.22, c),
+        Action::Airplane => plane_glyph(g, cx, cy, s * 1.5, c),
+        Action::Hotspot => hotspot_glyph(g, cx, cy, s * 1.4, c),
         _ => shield_glyph(g, cx, cy, s * 1.44, c),
     }
 }
 
-/// The bar action of a Wi-Fi, Bluetooth or VPN button.
+/// The bar action of a toggle button.
 fn radio_action(c: Control) -> Action {
     match c {
         Control::Wifi => Action::Wifi,
         Control::Bluetooth => Action::Bluetooth,
+        Control::Airplane => Action::Airplane,
+        Control::Hotspot => Action::Hotspot,
         _ => Action::Vpn,
+    }
+}
+
+/// A plane seen from above, nose up.
+fn plane_glyph(g: &Gfx, cx: f32, cy: f32, s: f32, c: C) {
+    let half = [
+        (0.0, -0.5),
+        (0.06, -0.44),
+        (0.06, -0.12),
+        (0.48, 0.1),
+        (0.48, 0.18),
+        (0.06, 0.06),
+        (0.06, 0.3),
+        (0.19, 0.4),
+        (0.19, 0.47),
+        (0.0, 0.42),
+    ];
+    // the right half, then the same mirrored back up the left
+    let pts: Vec<(f32, f32)> = half
+        .iter()
+        .chain(
+            half.iter()
+                .rev()
+                .skip(1)
+                .map(|&(x, y)| (-x, y))
+                .collect::<Vec<_>>()
+                .iter(),
+        )
+        .map(|&(x, y)| (cx + x * s, cy + y * s))
+        .collect();
+    g.poly(&pts, c);
+}
+
+/// A dot with waves going out to both sides.
+fn hotspot_glyph(g: &Gfx, cx: f32, cy: f32, s: f32, c: C) {
+    g.fill_circle(cx, cy, s * 0.09, c);
+    for r in [0.24, 0.42] {
+        g.arc_between(cx, cy, s * r, 0.8, 2.34, c, s * 0.08);
+        g.arc_between(cx, cy, s * r, -2.34, -0.8, c, s * 0.08);
     }
 }
 
 /// The glyph of a quick-controls button, sized like `radio_glyph`.
 pub fn control_glyph(g: &Gfx, c: Control, cx: f32, cy: f32, s: f32, col: C) {
     match c {
-        Control::Wifi | Control::Bluetooth | Control::Vpn => {
-            radio_glyph(g, radio_action(c), cx, cy, s, col)
-        }
+        Control::Wifi
+        | Control::Bluetooth
+        | Control::Vpn
+        | Control::Airplane
+        | Control::Hotspot => radio_glyph(g, radio_action(c), cx, cy, s, col),
         Control::Volume => speaker_glyph(g, cx, cy, s * 1.5, false, col),
         Control::Battery => battery_glyph(g, cx, cy, s * 1.5, col),
     }
@@ -1282,7 +1588,11 @@ fn lang(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut 
 /// Width of one part of the quick controls tile, before the size factor.
 fn control_w(c: Control, d: &Data) -> f32 {
     match c {
-        Control::Wifi | Control::Bluetooth | Control::Vpn => 30.0,
+        Control::Wifi
+        | Control::Bluetooth
+        | Control::Vpn
+        | Control::Airplane
+        | Control::Hotspot => 30.0,
         Control::Volume => 100.0,
         Control::Battery if d.battery.is_some() => 38.0,
         Control::Battery => 0.0,
@@ -1330,7 +1640,11 @@ fn controls(
     for &part in &v.s.controls {
         let pw = control_w(part, d) * k;
         match part {
-            Control::Wifi | Control::Bluetooth | Control::Vpn => {
+            Control::Wifi
+            | Control::Bluetooth
+            | Control::Vpn
+            | Control::Airplane
+            | Control::Hotspot => {
                 let act = radio_action(part);
                 let on = d.radio(act);
                 let cx = cur + pw / 2.0;
@@ -1627,4 +1941,737 @@ fn battery(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32) {
     let label = if charging { "Charging" } else { "Battery" };
     let value = format!("{:.0}", f * 100.0);
     ring(g, v, x + w / 2.0, y, h, f, rgba(c, 1.0), label, &value);
+}
+
+/// A microphone: a capsule on a stand, struck through when muted.
+pub fn mic_glyph(g: &Gfx, cx: f32, cy: f32, s: f32, muted: bool, c: C) {
+    let t = s * 0.09;
+    g.stroke_rr(
+        cx - s * 0.16,
+        cy - s * 0.48,
+        s * 0.32,
+        s * 0.56,
+        s * 0.16,
+        c,
+        t,
+    );
+    g.arc_between(
+        cx,
+        cy - s * 0.12,
+        s * 0.3,
+        PI / 2.0 + 0.15,
+        1.5 * PI - 0.15,
+        c,
+        t,
+    );
+    g.line(cx, cy + s * 0.18, cx, cy + s * 0.42, c, t);
+    if muted {
+        g.line(
+            cx - s * 0.36,
+            cy - s * 0.42,
+            cx + s * 0.36,
+            cy + s * 0.34,
+            c,
+            t,
+        );
+    }
+}
+
+/// Headphones: a band and two ear cups, struck through when the sound is off.
+pub fn headphones_glyph(g: &Gfx, cx: f32, cy: f32, s: f32, muted: bool, c: C) {
+    let t = s * 0.09;
+    g.arc_between(cx, cy + s * 0.04, s * 0.36, -PI / 2.0, PI / 2.0, c, t);
+    for dx in [-1.0, 1.0] {
+        let x = cx + dx * s * 0.36 - s * 0.1;
+        g.fill_rr(x, cy - s * 0.02, s * 0.2, s * 0.38, s * 0.07, c);
+    }
+    if muted {
+        g.line(
+            cx - s * 0.42,
+            cy - s * 0.4,
+            cx + s * 0.42,
+            cy + s * 0.38,
+            c,
+            t,
+        );
+    }
+}
+
+/// Mute the microphone and deafen (mute the speakers), each lit red while it's on.
+fn mic(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut Vec<Hit<Action>>) {
+    let k = v.m.k;
+    tile(g, v, x, y, w, h, false);
+    let (cy, br) = (y + h / 2.0, 13.0 * k);
+    let deaf = d.volume.as_ref().map(|vo| vo.muted);
+    for (i, (act, on)) in [(Action::Mic, d.mic), (Action::Mute, deaf)]
+        .into_iter()
+        .enumerate()
+    {
+        let cx = x + 4.0 * k + (i as f32 + 0.5) * 30.0 * k;
+        let lit = on == Some(true);
+        let red = rgba(0xFF453A, 1.0);
+        let mut bg = if lit { red } else { v.th.chip };
+        if v.hover == Some(act) && !lit {
+            bg.a *= 1.8;
+        }
+        g.fill_circle(cx, cy, br, bg);
+        let fg = dim(
+            if lit { on_fill(red) } else { v.th.text },
+            if on.is_some() { 1.0 } else { 0.35 },
+        );
+        if act == Action::Mic {
+            mic_glyph(g, cx, cy, 15.0 * k, lit, fg)
+        } else {
+            headphones_glyph(g, cx, cy, 15.0 * k, lit, fg)
+        }
+        hits.push((cx - br, cy - br, br * 2.0, br * 2.0, act));
+    }
+}
+
+/// Download and upload speed, one per line. Opens Task Manager, which has the graphs.
+fn network(
+    g: &Gfx,
+    v: &View,
+    d: &Data,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hits: &mut Vec<Hit<Action>>,
+) {
+    let k = v.m.k;
+    tile(g, v, x, y, w, h, v.hover == Some(Action::TaskManager));
+    let (down, up) = d.net.unwrap_or((0.0, 0.0));
+    let f = font(k, 11.0);
+    for (i, (arrow, bytes)) in [("↓", down), ("↑", up)].into_iter().enumerate() {
+        let ry = y + 5.0 * k + i as f32 * 17.0 * k;
+        g.text(
+            arrow,
+            x + 8.0 * k,
+            ry,
+            12.0 * k,
+            16.0 * k,
+            f,
+            700,
+            v.accent,
+            Align::Left,
+        );
+        let speed = crate::net::fmt_rate(bytes);
+        let (tx, tw) = (x + 20.0 * k, w - 28.0 * k);
+        g.text(
+            &speed,
+            tx,
+            ry,
+            tw,
+            16.0 * k,
+            f,
+            600,
+            v.th.text,
+            Align::Right,
+        );
+    }
+    hits.push((x, y, w, h, Action::TaskManager));
+}
+
+/// How long the sun and moon take to swap.
+pub const THEME_SWAP: f32 = 0.45;
+
+/// A sun: a disc with eight short rays.
+fn sun_glyph(g: &Gfx, cx: f32, cy: f32, s: f32, c: C) {
+    g.fill_circle(cx, cy, s * 0.24, c);
+    for i in 0..8 {
+        let a = i as f32 * PI / 4.0;
+        let (sa, ca) = (a.sin(), a.cos());
+        g.line(
+            cx + sa * s * 0.38,
+            cy - ca * s * 0.38,
+            cx + sa * s * 0.5,
+            cy - ca * s * 0.5,
+            c,
+            s * 0.1,
+        );
+    }
+}
+
+/// A crescent moon: a disc with a smaller one bitten out of its upper right.
+fn moon_glyph(g: &Gfx, cx: f32, cy: f32, s: f32, c: C) {
+    let (big, small) = (s * 0.46, s * 0.38);
+    let (dx, dy) = (s * 0.26, -s * 0.2); // the bite's centre, from the disc's
+    let d = (dx * dx + dy * dy).sqrt();
+    let toward = dy.atan2(dx);
+    // where the two circles cross, as angles from each centre
+    let a = ((big * big + d * d - small * small) / (2.0 * big * d))
+        .clamp(-1.0, 1.0)
+        .acos();
+    let b = ((small * small + d * d - big * big) / (2.0 * small * d))
+        .clamp(-1.0, 1.0)
+        .acos();
+    let n = 24;
+    let arc = |ox: f32, oy: f32, r: f32, from: f32, to: f32| {
+        (0..=n).map(move |i| {
+            let t = from + (to - from) * i as f32 / n as f32;
+            (ox + r * t.cos(), oy + r * t.sin())
+        })
+    };
+    // the disc's edge the long way round, outside the bite, then back along the bite's edge
+    let mut pts: Vec<(f32, f32)> = arc(cx, cy, big, toward + a, toward + 2.0 * PI - a).collect();
+    let mut bite: Vec<(f32, f32)> =
+        arc(cx + dx, cy + dy, small, toward + PI - b, toward + PI + b).collect();
+    let last = *pts.last().unwrap();
+    let dist = |p: (f32, f32)| (p.0 - last.0).powi(2) + (p.1 - last.1).powi(2);
+    if dist(bite[0]) > dist(*bite.last().unwrap()) {
+        bite.reverse();
+    }
+    pts.extend(bite);
+    g.poly(&pts, c);
+}
+
+/// A sun in light mode, a moon in dark mode. Switching spins the old one out and the new one in.
+fn theme_toggle(
+    g: &Gfx,
+    v: &View,
+    d: &Data,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hits: &mut Vec<Hit<Action>>,
+) {
+    let k = v.m.k;
+    hover_backing(g, v, Action::Theme, x, y, w, h);
+    let (cx, cy, s) = (x + w / 2.0, y + h / 2.0, 15.0 * k);
+    let light = d.light != Some(false);
+    let p = d
+        .theme_swap
+        .map_or(1.0, |t| (t.elapsed().as_secs_f32() / THEME_SWAP).min(1.0));
+    let draw = |is_light: bool, scale: f32, turn: f32| {
+        if scale <= 0.01 {
+            return;
+        }
+        // spin and scale about the icon, inside the bar
+        let (sin, cos) = (turn.sin() * scale, turn.cos() * scale);
+        g.set_transform(Matrix3x2 {
+            M11: cos,
+            M12: sin,
+            M21: -sin,
+            M22: cos,
+            M31: cx - cx * cos + cy * sin + v.bar_x,
+            M32: cy - cx * sin - cy * cos + v.bar_y,
+        });
+        if is_light {
+            sun_glyph(g, cx, cy, s, v.th.text)
+        } else {
+            moon_glyph(g, cx, cy, s, v.th.text)
+        }
+    };
+    if p < 1.0 {
+        let out = 1.0 - (p * 2.0).min(1.0);
+        draw(!light, out, p * PI / 2.0);
+        draw(light, ease_out_back(p), (p - 1.0) * PI / 2.0);
+        g.set_transform(about(1.0, 0.0, 0.0, v));
+    } else if light {
+        sun_glyph(g, cx, cy, s, v.th.text)
+    } else {
+        moon_glyph(g, cx, cy, s, v.th.text)
+    }
+    hits.push((x, y, w, h, Action::Theme));
+}
+
+/// How far through today, this month and this year we are, as three rings.
+fn progress(
+    g: &Gfx,
+    v: &View,
+    d: &Data,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hits: &mut Vec<Hit<Action>>,
+) {
+    let act = Action::Open(Panel::Calendar);
+    tile(g, v, x, y, w, h, v.hover == Some(act));
+    let fracs = crate::dates::progress(d.time);
+    for (i, (frac, label)) in fracs.into_iter().zip(["Day", "Month", "Year"]).enumerate() {
+        let value = format!("{:.0}", (frac * 100.0).floor());
+        let cx = x + w * (i as f32 * 2.0 + 1.0) / 6.0;
+        ring(g, v, cx, y, h, frac, v.accent, label, &value);
+    }
+    hits.push((x, y, w, h, act));
+}
+
+/// DeepSeek's whale on white.
+fn deepseek_logo(g: &Gfx, x: f32, y: f32, s: f32) {
+    brand(g, 3, white(1.0), 0.12, x, y, s);
+}
+
+/// What's left on the DeepSeek account. Without a key it asks for one in Settings.
+fn deepseek(
+    g: &Gfx,
+    v: &View,
+    d: &Data,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hits: &mut Vec<Hit<Action>>,
+) {
+    let k = v.m.k;
+    let keyed = !v.s.deepseek_key.is_empty();
+    let act = if keyed {
+        Action::DeepSeek
+    } else {
+        Action::Settings
+    };
+    tile(g, v, x, y, w, h, v.hover == Some(act));
+    deepseek_logo(g, x + 6.0 * k, y + (h - 30.0 * k) / 2.0, 30.0 * k);
+    let (tx, tw) = (x + 42.0 * k, w - 48.0 * k);
+    let (label, amount) = match (&d.deepseek, keyed) {
+        (Some(b), _) => ("Balance", b.first().map(|b| b.text()).unwrap_or_default()),
+        (None, true) => ("Balance", "…".to_string()),
+        (None, false) => ("DeepSeek", "Add a key".to_string()),
+    };
+    g.text(
+        label,
+        tx,
+        y + 5.0 * k,
+        tw,
+        15.0 * k,
+        font(k, 10.0),
+        500,
+        v.th.sub,
+        Align::Left,
+    );
+    g.text(
+        &amount,
+        tx,
+        y + 19.0 * k,
+        tw,
+        20.0 * k,
+        font(k, 14.0),
+        600,
+        v.th.text,
+        Align::Left,
+    );
+    hits.push((x, y, w, h, act));
+}
+
+/// An envelope with Gmail's red M across its flap.
+fn gmail_logo(g: &Gfx, x: f32, y: f32, s: f32) {
+    g.fill_rr(x, y, s, s, s * 0.24, white(1.0));
+    let (l, r, t, b) = (x + s * 0.2, x + s * 0.8, y + s * 0.3, y + s * 0.72);
+    let red = rgba(0xEA4335, 1.0);
+    let w = s * 0.09;
+    g.line(l, b, l, t, red, w);
+    g.line(l, t, x + s / 2.0, y + s * 0.52, red, w);
+    g.line(x + s / 2.0, y + s * 0.52, r, t, red, w);
+    g.line(r, t, r, b, red, w);
+}
+
+/// Unread conversations in the Gmail inbox. Opens Gmail, or Settings to sign in.
+fn gmail(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut Vec<Hit<Action>>) {
+    let k = v.m.k;
+    let act = match d.gmail {
+        Some(Ok(_)) => Action::Gmail,
+        _ => Action::Settings,
+    };
+    tile(g, v, x, y, w, h, v.hover == Some(act));
+    gmail_logo(g, x + 6.0 * k, y + (h - 30.0 * k) / 2.0, 30.0 * k);
+    let (tx, tw) = (x + 42.0 * k, w - 48.0 * k);
+    let (label, value) = match d.gmail {
+        Some(Ok(n)) => ("Unread", n.to_string()),
+        Some(Err(note)) => ("Gmail", note.to_string()),
+        None if d.google => ("Unread", "…".to_string()),
+        None => ("Gmail", "Sign in".to_string()),
+    };
+    let big = if matches!(d.gmail, Some(Ok(_))) {
+        16.0
+    } else {
+        11.0
+    };
+    g.text(
+        label,
+        tx,
+        y + 5.0 * k,
+        tw,
+        15.0 * k,
+        font(k, 10.0),
+        500,
+        v.th.sub,
+        Align::Left,
+    );
+    g.text(
+        &value,
+        tx,
+        y + 19.0 * k,
+        tw,
+        20.0 * k,
+        font(k, big),
+        600,
+        v.th.text,
+        Align::Left,
+    );
+    hits.push((x, y, w, h, act));
+}
+
+/// A bell. Clicking it opens the notification centre (Win+N).
+fn notifications(g: &Gfx, v: &View, x: f32, y: f32, w: f32, h: f32, hits: &mut Vec<Hit<Action>>) {
+    let k = v.m.k;
+    let act = Action::Notifications;
+    hover_backing(g, v, act, x, y, w, h);
+    let (cx, cy, c, t) = (x + w / 2.0, y + h / 2.0, v.th.text, 1.4 * k);
+    let (r, top, rim) = (4.2 * k, cy - 2.0 * k, cy + 3.5 * k);
+    g.arc_between(cx, top, r, -PI / 2.0, PI / 2.0, c, t);
+    g.line(cx - r, top, cx - r - 1.2 * k, rim, c, t);
+    g.line(cx + r, top, cx + r + 1.2 * k, rim, c, t);
+    g.line(cx - r - 1.8 * k, rim, cx + r + 1.8 * k, rim, c, t);
+    g.fill_circle(cx, rim + 2.2 * k, 1.3 * k, c);
+    hits.push((x, y, w, h, act));
+}
+
+/// Today's date: the weekday over the day and month, or a calendar page with the day number.
+fn date(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut Vec<Hit<Action>>) {
+    let k = v.m.k;
+    let act = Action::Open(Panel::Calendar);
+    tile(g, v, x, y, w, h, v.hover == Some(act));
+    let t = d.time;
+    let wd = crate::dates::weekday(t.days());
+    if v.s.variant(Widget::Date) == Variant::DayNumber {
+        let red = rgba(if v.th.dark { 0xFF453A } else { 0xD70015 }, 1.0);
+        let short = crate::dates::day_name(wd).to_uppercase();
+        g.text(
+            &short,
+            x,
+            y + 4.0 * k,
+            w,
+            13.0 * k,
+            font(k, 10.0),
+            700,
+            red,
+            Align::Center,
+        );
+        let day = t.day.to_string();
+        g.text(
+            &day,
+            x,
+            y + 15.0 * k,
+            w,
+            h - 17.0 * k,
+            font(k, 19.0),
+            600,
+            v.th.text,
+            Align::Center,
+        );
+    } else {
+        let (tx, tw) = (x + 10.0 * k, w - 20.0 * k);
+        let name = crate::dates::day_full_name(wd);
+        g.text(
+            name,
+            tx,
+            y + 5.0 * k,
+            tw,
+            15.0 * k,
+            font(k, 10.0),
+            600,
+            v.th.sub,
+            Align::Left,
+        );
+        let day = format!("{} {}", crate::dates::month_name(t.month), t.day);
+        g.text(
+            &day,
+            tx,
+            y + 19.0 * k,
+            tw,
+            20.0 * k,
+            font(k, 15.0),
+            700,
+            v.th.text,
+            Align::Left,
+        );
+    }
+    hits.push((x, y, w, h, act));
+}
+
+/// How far through the track it is, 0 to 1. 0 when the player gives no length.
+fn track_progress(d: &Data) -> f32 {
+    d.media
+        .as_ref()
+        .filter(|m| m.length > 0.0)
+        .map_or(0.0, |m| (m.position / m.length) as f32)
+        .clamp(0.0, 1.0)
+}
+
+/// The cover, rounded, or a plain square with a note on it when the track has none.
+fn cover(g: &Gfx, v: &View, x: f32, y: f32, s: f32) {
+    let r = s * 0.22;
+    match g.cached("art") {
+        Some(b) => g.bitmap_rr(&b, x, y, s, s, r),
+        None => {
+            g.fill_rr(x, y, s, s, r, v.th.chip);
+            let (cx, cy) = (x + s * 0.44, y + s * 0.64);
+            g.fill_circle(cx, cy, s * 0.1, v.th.sub);
+            g.line(
+                cx + s * 0.09,
+                cy,
+                cx + s * 0.09,
+                y + s * 0.28,
+                v.th.sub,
+                s * 0.05,
+            );
+        }
+    }
+}
+
+/// A round play or pause button.
+fn play_button(g: &Gfx, v: &View, d: &Data, cx: f32, cy: f32, r: f32, hits: &mut Vec<Hit<Action>>) {
+    let playing = d.media.as_ref().is_some_and(|m| m.playing);
+    let mut bg = v.th.chip;
+    if v.hover == Some(Action::Toggle) {
+        bg.a *= 1.8;
+    }
+    g.fill_circle(cx, cy, r, bg);
+    let fade = if d.media.is_some() { 1.0 } else { 0.45 };
+    media_glyph(
+        g,
+        Action::Toggle,
+        playing,
+        cx,
+        cy,
+        r * 0.34,
+        dim(v.th.text, fade),
+    );
+    hits.push((cx - r, cy - r, 2.0 * r, 2.0 * r, Action::Toggle));
+}
+
+/// Extra large: cover, title and artist over a progress bar, play and skip. Medium: cover,
+/// title and artist, and play.
+fn media_card(
+    g: &Gfx,
+    v: &View,
+    d: &Data,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hits: &mut Vec<Hit<Action>>,
+) {
+    let k = v.m.k;
+    let xl = v.s.variant(Widget::Media) == Variant::ExtraLarge;
+    tile(g, v, x, y, w, h, false);
+    let s = h - 12.0 * k;
+    cover(g, v, x + 6.0 * k, y + 6.0 * k, s);
+    let (title, artist) = match &d.media {
+        Some(m) => (m.title.as_str(), m.artist.as_str()),
+        None => ("Nothing playing", ""),
+    };
+    let buttons = if xl { 64.0 } else { 38.0 } * k;
+    let (tx, tw) = (x + s + 14.0 * k, w - s - 14.0 * k - buttons);
+    let ty = if xl { y + 4.0 * k } else { y + 7.0 * k };
+    g.text(
+        title,
+        tx,
+        ty,
+        tw,
+        15.0 * k,
+        font(k, 11.0),
+        700,
+        v.th.text,
+        Align::Left,
+    );
+    g.text(
+        artist,
+        tx,
+        ty + 14.0 * k,
+        tw,
+        14.0 * k,
+        font(k, 10.0),
+        500,
+        v.th.sub,
+        Align::Left,
+    );
+    if xl {
+        let by = y + h - 10.0 * k;
+        g.fill_rr(tx, by, tw, 3.0 * k, 1.5 * k, v.th.chip);
+        g.fill_rr(tx, by, tw * track_progress(d), 3.0 * k, 1.5 * k, v.th.text);
+    }
+    let cy = y + h / 2.0;
+    let play_x = x + w - if xl { 46.0 } else { 22.0 } * k;
+    play_button(g, v, d, play_x, cy, 13.0 * k, hits);
+    if xl {
+        let nx = x + w - 16.0 * k;
+        if v.hover == Some(Action::Next) {
+            g.fill_circle(nx, cy, 11.0 * k, v.th.tile_hover);
+        }
+        let fade = if d.media.is_some() { 1.0 } else { 0.45 };
+        media_glyph(
+            g,
+            Action::Next,
+            false,
+            nx,
+            cy,
+            4.2 * k,
+            dim(v.th.text, fade),
+        );
+        hits.push((nx - 12.0 * k, y, 24.0 * k, h, Action::Next));
+    }
+}
+
+/// Small: one round play button, with the track's progress running round it.
+fn media_mini(
+    g: &Gfx,
+    v: &View,
+    d: &Data,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hits: &mut Vec<Hit<Action>>,
+) {
+    let k = v.m.k;
+    tile(g, v, x, y, w, h, false);
+    let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+    let r = 16.0 * k;
+    g.arc(cx, cy, r, 1.0, v.th.chip, 2.6 * k);
+    g.arc(cx, cy, r, track_progress(d), v.th.text, 2.6 * k);
+    play_button(g, v, d, cx, cy, 12.0 * k, hits);
+}
+
+/// `a`, then `b`: Direct2D's matrices act on row vectors.
+fn then(a: Matrix3x2, b: Matrix3x2) -> Matrix3x2 {
+    Matrix3x2 {
+        M11: a.M11 * b.M11 + a.M12 * b.M21,
+        M12: a.M11 * b.M12 + a.M12 * b.M22,
+        M21: a.M21 * b.M11 + a.M22 * b.M21,
+        M22: a.M21 * b.M12 + a.M22 * b.M22,
+        M31: a.M31 * b.M11 + a.M32 * b.M21 + b.M31,
+        M32: a.M31 * b.M12 + a.M32 * b.M22 + b.M32,
+    }
+}
+
+/// What the widget picker draws with: the live time, weather and track where there are some,
+/// made-up numbers for the rest, so every tile has something to show.
+fn sample(live: &Data) -> Data {
+    use crate::limits::{Balance, Window};
+    let limits = |a: f32, b: f32, w: [Window; 2]| {
+        let now = live.now;
+        Some(vec![
+            Limit {
+                window: w[0],
+                pct: a,
+                resets: Some(now + 2 * 3600 + 13 * 60),
+            },
+            Limit {
+                window: w[1],
+                pct: b,
+                resets: Some(now + 4 * 86400 + 10 * 3600),
+            },
+        ])
+    };
+    let media = live.media.clone().or_else(|| {
+        Some(crate::controls::Media {
+            title: "Afterglow".into(),
+            artist: "Lumen".into(),
+            playing: true,
+            position: 84.0,
+            length: 214.0,
+            ..Default::default()
+        })
+    });
+    Data {
+        cpu: 0.23,
+        mem: 0.61,
+        battery: Some((0.8, false)),
+        media,
+        weather: live.weather.clone(),
+        weather_w: live.weather_w.max(90.0),
+        claude: limits(34.0, 58.0, [Window::Session, Window::Weekly]),
+        codex: limits(12.0, 40.0, [Window::Session, Window::Weekly]),
+        antigravity: limits(5.0, 0.0, [Window::Weekly, Window::OtherWeekly]),
+        cursor: limits(4.0, 4.0, [Window::Included, Window::Auto]),
+        deepseek: Some(vec![Balance {
+            currency: "USD".into(),
+            total: 12.4,
+        }]),
+        gmail: Some(Ok(11)),
+        google: true,
+        volume: Some(crate::controls::Volume {
+            level: 0.6,
+            muted: false,
+            name: "Speakers".into(),
+        }),
+        mic: Some(false),
+        net: Some((2_400_000.0, 180_000.0)),
+        light: live.light,
+        wifi: Some(true),
+        bluetooth: Some(true),
+        vpn: Some(false),
+        airplane: Some(false),
+        hotspot: Some(false),
+        lang: Some(("ENG".into(), "US".into())),
+        now: live.now,
+        time: live.time,
+        ..Default::default()
+    }
+}
+
+/// A tile as the widget picker shows it: on a strip of the bar's own colours, shrunk to fit
+/// the box when it's wider, with sample numbers where the real ones aren't in yet.
+pub fn preview(g: &Gfx, s: &Settings, live: &Data, widget: Widget, x: f32, y: f32, w: f32, h: f32) {
+    let th = theme(s.style);
+    let base = if th.dark { 0x23242B } else { 0xE6E7EC };
+    g.fill_rr(x, y, w, h, 12.0, rgba(base, 1.0));
+    if let Some(tint) = th.bar {
+        g.fill_rr(x, y, w, h, 12.0, tint);
+    }
+    let d = sample(live);
+    let m = metrics(Size::M);
+    let v = View {
+        s,
+        th,
+        m,
+        accent: accent(s),
+        hover: None,
+        mag: &[],
+        intro: 1e3,
+        slide: &[],
+        lifted: None,
+        bar_x: 0.0,
+        bar_y: 0.0,
+        tip: None,
+    };
+    let th_ = m.h - 2.0 * m.pad;
+    let tw = match widget {
+        Widget::Apps => 3.0 * icon_step(&m) + 2.0 * ICON_LEAD * m.k,
+        _ => tile_w(widget, &d, &v).unwrap_or(56.0),
+    };
+    let k = ((w - 16.0) / tw).min((h - 10.0) / th_).min(1.0);
+    // the tile's own box, centred in the strip and scaled about the strip's centre
+    let (tx, ty) = (x + (w - tw) / 2.0, y + (h - th_) / 2.0);
+    let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+    let outer = g.transform();
+    let local = Matrix3x2 {
+        M11: k,
+        M12: 0.0,
+        M21: 0.0,
+        M22: k,
+        M31: cx * (1.0 - k),
+        M32: cy * (1.0 - k),
+    };
+    g.set_transform(then(local, outer));
+    if widget == Widget::Apps {
+        // no app icons in this window: three placeholders where they'd go
+        for i in 0..3 {
+            let ix = tx + ICON_LEAD * m.k + i as f32 * icon_step(&m);
+            g.fill_rr(
+                ix,
+                ty + (th_ - m.icon) / 2.0,
+                m.icon,
+                m.icon,
+                9.0,
+                v.th.chip,
+            );
+        }
+    } else {
+        draw_tile(g, &v, &d, widget, tx, ty, tw, th_, &mut vec![]);
+    }
+    g.set_transform(outer);
 }

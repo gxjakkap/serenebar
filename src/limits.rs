@@ -1,4 +1,4 @@
-//! Claude and Codex plan limits.
+//! AI plan limits: Claude, Codex, Antigravity and Cursor, and the DeepSeek balance.
 use crate::dates::iso_to_unix;
 use serde_json::Value;
 
@@ -9,11 +9,46 @@ pub enum Window {
     Weekly,
     Opus,
     Sonnet,
+    /// Antigravity's pool for the models that aren't Gemini.
+    OtherSession,
+    OtherWeekly,
+    /// Cursor: the plan's included usage this period, and its two halves.
+    Included,
+    Auto,
+    Api,
 }
 
 impl Window {
     pub fn label(self) -> &'static str {
-        ["Session", "Weekly", "Opus", "Sonnet"][self as usize]
+        [
+            "Session",
+            "Weekly",
+            "Opus",
+            "Sonnet",
+            "Claude and GPT, session",
+            "Claude and GPT, weekly",
+            "Included",
+            "Auto",
+            "API",
+        ][self as usize]
+    }
+
+    /// The label on the bar, where there's only room for a word.
+    pub fn short(self) -> &'static str {
+        match self {
+            Window::OtherSession | Window::OtherWeekly => "Others",
+            w => w.label(),
+        }
+    }
+
+    /// One to three letters, for the medium tile.
+    pub fn abbr(self) -> &'static str {
+        ["S", "W", "Op", "Son", "OS", "OW", "Inc", "A", "API"][self as usize]
+    }
+
+    /// One letter, for the small tile.
+    pub fn letter(self) -> &'static str {
+        &self.abbr()[..1]
     }
 }
 
@@ -160,16 +195,257 @@ pub fn parse_codex_line(line: &str) -> Option<Vec<Limit>> {
     (!out.is_empty()).then_some(out)
 }
 
+/// Antigravity's `retrieveUserQuotaSummary`: groups of buckets like `gemini-5h` and
+/// `3p-weekly`, each with the fraction left. Gemini first, then each session before its week.
+pub fn parse_antigravity(body: &str) -> Option<Vec<Limit>> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let mut out: Vec<Limit> = v["groups"]
+        .as_array()?
+        .iter()
+        .flat_map(|g| {
+            // bucket ids differ between plans, so the group's name says which pool it is
+            let name = g["displayName"].as_str().unwrap_or("").to_lowercase();
+            let buckets = g["buckets"].as_array().into_iter().flatten();
+            buckets.map(move |b| (name.contains("gemini"), b))
+        })
+        .filter(|(_, b)| b["disabled"].as_bool() != Some(true))
+        .filter_map(|(in_gemini, b)| {
+            let id = b["bucketId"].as_str().unwrap_or("");
+            let gemini = in_gemini || id.starts_with("gemini");
+            let five = id.ends_with("5h") || b["window"].as_str() == Some("5h");
+            let window = match (gemini, five) {
+                (true, true) => Window::Session,
+                (true, false) => Window::Weekly,
+                (false, true) => Window::OtherSession,
+                (false, false) => Window::OtherWeekly,
+            };
+            let left = b["remainingFraction"].as_f64()?;
+            Some(Limit {
+                window,
+                pct: ((1.0 - left) * 100.0).clamp(0.0, 100.0) as f32,
+                resets: b["resetTime"].as_str().and_then(iso_to_unix),
+            })
+        })
+        .collect();
+    // the fullest of any two buckets in one window, so a busy one is never hidden
+    out.sort_by(|a, b| {
+        (a.window as usize)
+            .cmp(&(b.window as usize))
+            .then(b.pct.total_cmp(&a.pct))
+    });
+    out.dedup_by_key(|l| l.window);
+    (!out.is_empty()).then_some(out)
+}
+
+/// (access token, refresh token, unix expiry) from the agy CLI's stored sign-in:
+/// `{"token": {"access_token", "refresh_token", "expiry"}}`.
+pub fn parse_agy_token(blob: &str) -> Option<(String, String, i64)> {
+    let v: Value = serde_json::from_str(blob).ok()?;
+    let t = if v["token"].is_object() {
+        &v["token"]
+    } else {
+        &v
+    };
+    Some((
+        t["access_token"].as_str().unwrap_or("").to_string(),
+        t["refresh_token"].as_str()?.to_string(),
+        t["expiry"].as_str().and_then(iso_to_unix).unwrap_or(0),
+    ))
+}
+
+/// The Google Cloud project `loadCodeAssist` assigns, which the quota call asks about.
+pub fn code_assist_project(body: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let p = &v["cloudaicompanionProject"];
+    p.as_str().or(p["id"].as_str()).map(String::from)
+}
+
+/// Every pairing of the OAuth client IDs and secrets compiled into a program. agy keeps its
+/// own in its executable, and refreshing its sign-in needs the matching pair.
+pub fn oauth_clients(bin: &[u8]) -> Vec<(String, String)> {
+    let find_all = |needle: &[u8]| -> Vec<usize> {
+        bin.windows(needle.len())
+            .enumerate()
+            .filter(|(_, w)| *w == needle)
+            .map(|(i, _)| i)
+            .collect()
+    };
+    let mut ids: Vec<String> = vec![];
+    for end in find_all(b".apps.googleusercontent.com") {
+        let start = bin[..end]
+            .iter()
+            .rposition(|c| !(c.is_ascii_digit() || c.is_ascii_lowercase() || *c == b'-'))
+            .map_or(0, |i| i + 1);
+        let id = String::from_utf8_lossy(&bin[start..end]).into_owned();
+        let ok = id.split_once('-').is_some_and(|(num, rest)| {
+            num.len() >= 10 && num.bytes().all(|c| c.is_ascii_digit()) && rest.len() >= 16
+        });
+        let id = format!("{id}.apps.googleusercontent.com");
+        if ok && !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    let mut secrets: Vec<String> = vec![];
+    for at in find_all(b"GOCSPX-") {
+        let tail = &bin[at..(at + 35).min(bin.len())];
+        let ok = tail.len() == 35
+            && tail[7..]
+                .iter()
+                .all(|c| c.is_ascii_alphanumeric() || *c == b'_' || *c == b'-');
+        let s = String::from_utf8_lossy(tail).into_owned();
+        if ok && !secrets.contains(&s) {
+            secrets.push(s);
+        }
+    }
+    ids.iter()
+        .flat_map(|i| secrets.iter().map(move |s| (i.clone(), s.clone())))
+        .collect()
+}
+
+/// Money left on a pay-as-you-go account, in one currency.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Balance {
+    pub currency: String,
+    pub total: f64,
+}
+
+impl Balance {
+    /// "¥110.00", "$5.20", or the code in front for any other currency.
+    pub fn text(&self) -> String {
+        match self.currency.as_str() {
+            "CNY" => format!("¥{:.2}", self.total),
+            "USD" => format!("${:.2}", self.total),
+            c => format!("{c} {:.2}", self.total),
+        }
+    }
+}
+
+/// DeepSeek's `GET /user/balance`. The amounts come as strings.
+pub fn parse_deepseek(body: &str) -> Option<Vec<Balance>> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let out: Vec<Balance> = v["balance_infos"]
+        .as_array()?
+        .iter()
+        .filter_map(|b| {
+            let total = &b["total_balance"];
+            Some(Balance {
+                currency: b["currency"].as_str()?.to_string(),
+                total: total
+                    .as_str()
+                    .and_then(|t| t.parse().ok())
+                    .or(total.as_f64())?,
+            })
+        })
+        .collect();
+    (!out.is_empty()).then_some(out)
+}
+
+/// The claims in a JWT's middle part.
+pub fn jwt_claims(jwt: &str) -> Option<Value> {
+    let part = jwt.split('.').nth(1)?;
+    let b64: String = part
+        .chars()
+        .map(|c| match c {
+            '-' => '+',
+            '_' => '/',
+            c => c,
+        })
+        .collect();
+    serde_json::from_slice(&crate::http::base64_decode(&b64)?).ok()
+}
+
+/// Cursor's session token from the bytes of its state database (and its write-ahead log): the
+/// value stored after the `cursorAuth/accessToken` key. Old copies linger in freed pages, so
+/// the one that expires last wins. Returns (user id, token), the two halves of the cookie.
+/// ponytail: a byte scan instead of a SQLite reader; a token too big for one page is missed.
+pub fn cursor_token(files: &[&[u8]]) -> Option<(String, String)> {
+    const KEY: &[u8] = b"cursorAuth/accessToken";
+    let jwt_char = |c: &u8| c.is_ascii_alphanumeric() || b"-_.".contains(c);
+    let mut best: Option<(i64, String, String)> = None;
+    for bin in files {
+        for at in (0..bin.len().saturating_sub(KEY.len())).filter(|&i| bin[i..].starts_with(KEY)) {
+            let rest = &bin[at + KEY.len()..];
+            if !rest.starts_with(b"eyJ") {
+                continue; // the key's index entry, not its row
+            }
+            let n = rest.iter().take_while(|c| jwt_char(c)).count();
+            let jwt = String::from_utf8_lossy(&rest[..n]).into_owned();
+            let Some(claims) = jwt_claims(&jwt) else {
+                continue;
+            };
+            let exp = claims["exp"].as_i64().unwrap_or(0);
+            // "auth0|user_01…": the cookie wants only the part after the bar
+            let Some(user) = claims["sub"].as_str().and_then(|s| s.rsplit('|').next()) else {
+                continue;
+            };
+            if best.as_ref().is_none_or(|b| exp > b.0) {
+                best = Some((exp, user.to_string(), jwt));
+            }
+        }
+    }
+    best.map(|(_, u, t)| (u, t))
+}
+
+/// Cursor's `DashboardService/GetCurrentPeriodUsage`: what its dashboard shows as "included
+/// usage", for the current period. The period's end comes in milliseconds, as a string.
+pub fn parse_cursor_period(body: &str) -> Option<Vec<Limit>> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let end = &v["billingCycleEnd"];
+    let ms = end
+        .as_str()
+        .and_then(|s| s.parse::<i64>().ok())
+        .or(end.as_i64());
+    cursor_plan(&v["planUsage"], ms.map(|ms| ms / 1000))
+}
+
+/// Cursor's older `GET /api/usage-summary`. On the current plans its percentages can stay at 0,
+/// so it's only the fallback.
+pub fn parse_cursor(body: &str) -> Option<Vec<Limit>> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let resets = v["billingCycleEnd"].as_str().and_then(iso_to_unix);
+    cursor_plan(&v["individualUsage"]["plan"], resets)
+}
+
+/// The plan's use overall, then split into Auto and the named (API) models.
+fn cursor_plan(plan: &Value, resets: Option<i64>) -> Option<Vec<Limit>> {
+    let total = plan["totalPercentUsed"].as_f64().or_else(|| {
+        let (used, limit) = (plan["used"].as_f64()?, plan["limit"].as_f64()?);
+        (limit > 0.0).then(|| used / limit * 100.0)
+    })?;
+    let mut out = vec![Limit {
+        window: Window::Included,
+        pct: total as f32,
+        resets,
+    }];
+    for (k, window) in [
+        ("autoPercentUsed", Window::Auto),
+        ("apiPercentUsed", Window::Api),
+    ] {
+        if let Some(p) = plan[k].as_f64() {
+            out.push(Limit {
+                window,
+                pct: p as f32,
+                resets,
+            });
+        }
+    }
+    Some(out)
+}
+
 #[cfg(windows)]
 pub use win::*;
 
 #[cfg(windows)]
 mod win {
     use crate::dates::unix_now;
-    use crate::http::{curl, curl_json};
-    use crate::limits::{apply_claude_refresh, claude_refresh_body, Limit, CLAUDE_TOKEN_URL};
+    use crate::http::{curl, curl_form, curl_json, curl_post, pct};
+    use crate::limits::{
+        apply_claude_refresh, claude_refresh_body, code_assist_project, oauth_clients,
+        parse_agy_token, parse_antigravity, parse_cursor_period, Limit, CLAUDE_TOKEN_URL,
+    };
     use serde_json::Value;
     use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
 
     fn home() -> PathBuf {
         std::env::var("USERPROFILE").unwrap_or_default().into()
@@ -188,9 +464,14 @@ mod win {
         }
 
         fn read(part: &str) -> Option<Vec<u8>> {
+            read_generic(&target(part))
+        }
+
+        /// A generic credential's secret, as stored.
+        pub fn read_generic(target: &HSTRING) -> Option<Vec<u8>> {
             let mut c: *mut CREDENTIALW = std::ptr::null_mut();
             unsafe {
-                CredReadW(&target(part), CRED_TYPE_GENERIC, 0, &mut c).ok()?;
+                CredReadW(target, CRED_TYPE_GENERIC, 0, &mut c).ok()?;
                 let r = &*c;
                 let blob = if r.CredentialBlob.is_null() {
                     vec![]
@@ -383,6 +664,108 @@ mod win {
         )?)
     }
 
+    /// Antigravity's access token and when it expires, and the OAuth client that refreshed it.
+    /// ponytail: a refreshed token stays in memory, not written back for agy; Google keeps a
+    /// desktop app's refresh token, so agy's own copy keeps working.
+    static AGY: Mutex<Option<(String, i64)>> = Mutex::new(None);
+    static AGY_CLIENT: Mutex<Option<(String, String)>> = Mutex::new(None);
+    static AGY_PROJECT: Mutex<Option<String>> = Mutex::new(None);
+
+    /// agy.exe where its installer puts it, else on PATH.
+    fn agy_exe() -> Option<PathBuf> {
+        let local =
+            std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join(r"agy\bin\agy.exe"));
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        local
+            .into_iter()
+            .chain(std::env::split_paths(&path).map(|d| d.join("agy.exe")))
+            .find(|p| p.is_file())
+    }
+
+    fn agy_token() -> Option<String> {
+        let now = unix_now();
+        let cached = AGY.lock().unwrap().clone().filter(|a| a.1 > now + 60);
+        if let Some((t, _)) = cached {
+            return Some(t);
+        }
+        let blob = credman::read_generic(&windows::core::HSTRING::from("gemini:antigravity"))?;
+        let (access, refresh, exp) = parse_agy_token(&String::from_utf8(blob).ok()?)?;
+        if exp > now + 60 && !access.is_empty() {
+            *AGY.lock().unwrap() = Some((access.clone(), exp));
+            return Some(access);
+        }
+        let known = AGY_CLIENT.lock().unwrap().clone();
+        let clients = match known {
+            Some(c) => vec![c],
+            None => oauth_clients(&std::fs::read(agy_exe()?).ok()?),
+        };
+        for (id, secret) in clients {
+            let form = format!(
+                "grant_type=refresh_token&refresh_token={}&client_id={}&client_secret={}",
+                pct(&refresh),
+                pct(&id),
+                pct(&secret)
+            );
+            let Some((t, _, expires)) = curl_form("https://oauth2.googleapis.com/token", &form)
+                .and_then(|b| crate::google::parse_token(&b))
+            else {
+                continue;
+            };
+            *AGY_CLIENT.lock().unwrap() = Some((id, secret));
+            *AGY.lock().unwrap() = Some((t.clone(), now + expires));
+            return Some(t);
+        }
+        None
+    }
+
+    /// Antigravity's plan limits, from the sign-in its CLI (agy) keeps in Credential Manager.
+    /// The token only goes to Google.
+    pub fn antigravity_limits() -> Option<Vec<Limit>> {
+        let token = agy_token()?;
+        let headers = format!("Authorization: Bearer {token}\r\nUser-Agent: antigravity\r\n");
+        let known = AGY_PROJECT.lock().unwrap().clone();
+        let project = match known {
+            Some(p) => p,
+            None => {
+                let meta = r#"{"metadata":{"ideType":"ANTIGRAVITY","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}}"#;
+                let url = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
+                let p = code_assist_project(&curl_post(url, &headers, meta)?)?;
+                *AGY_PROJECT.lock().unwrap() = Some(p.clone());
+                p
+            }
+        };
+        let body = serde_json::json!({ "project": project }).to_string();
+        // the daily host has the live numbers; the other one can lag at 100% left
+        let url = "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
+        parse_antigravity(&curl_post(url, &headers, &body)?)
+    }
+
+    /// Cursor's plan use, with the session Cursor keeps on this PC. The token only goes to Cursor.
+    pub fn cursor_limits() -> Option<Vec<Limit>> {
+        let db = PathBuf::from(std::env::var_os("APPDATA")?)
+            .join(r"Cursor\User\globalStorage\state.vscdb");
+        let main = std::fs::read(&db).ok()?;
+        let wal = std::fs::read(db.with_extension("vscdb-wal")).unwrap_or_default();
+        let (user, token) = crate::limits::cursor_token(&[&main, &wal])?;
+        let bearer = format!("Authorization: Bearer {token}\r\nConnect-Protocol-Version: 1\r\n");
+        let url = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage";
+        if let Some(l) = curl_post(url, &bearer, "{}").and_then(|b| parse_cursor_period(&b)) {
+            return Some(l);
+        }
+        let cookie = format!("Cookie: WorkosCursorSessionToken={user}%3A%3A{token}\r\n");
+        let url = "https://cursor.com/api/usage-summary";
+        crate::limits::parse_cursor(&curl(url, Some(&cookie))?)
+    }
+
+    /// The balance on a DeepSeek account. The key only goes to DeepSeek.
+    pub fn deepseek_balance(key: &str) -> Option<Vec<crate::limits::Balance>> {
+        let headers = format!("Authorization: Bearer {key}\r\nAccept: application/json\r\n");
+        crate::limits::parse_deepseek(&curl(
+            "https://api.deepseek.com/user/balance",
+            Some(&headers),
+        )?)
+    }
+
     /// Codex CLI writes its rate limits into the session logs, so this reads the newest one.
     /// No network.
     pub fn codex_limits() -> Option<Vec<Limit>> {
@@ -491,5 +874,135 @@ mod tests {
             (Window::Weekly, Some(1763900000))
         );
         assert_eq!(parse_codex_line(r#"{"type":"message"}"#), None);
+    }
+
+    #[test]
+    fn antigravity_quota() {
+        let b = r#"{"description":"","groups":[
+            {"displayName":"Claude and GPT models","buckets":[
+                {"bucketId":"3p-weekly","window":"weekly","remainingFraction":0.9,"resetTime":"2026-11-20T00:00:00Z"},
+                {"bucketId":"3p-5h","window":"5h","remainingFraction":1.0,"disabled":true}]},
+            {"displayName":"Gemini Models","buckets":[
+                {"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.8127},
+                {"bucketId":"gemini-5h","window":"5h","remainingFraction":0.2725,"resetTime":"2026-11-18T15:00:00Z"}]}]}"#;
+        let l = parse_antigravity(b).unwrap();
+        let w: Vec<Window> = l.iter().map(|l| l.window).collect();
+        assert_eq!(w, [Window::Session, Window::Weekly, Window::OtherWeekly]);
+        assert!((l[0].pct - 72.75).abs() < 0.01);
+        assert_eq!(l[0].resets, iso_to_unix("2026-11-18T15:00:00Z"));
+        assert_eq!(parse_antigravity(r#"{"groups":[]}"#), None);
+        // a Starter plan: weekly windows only, and Gemini's bucket named for the plan
+        let starter = r#"{"groups":[
+            {"displayName":"Gemini Models","buckets":[{"bucketId":"starter-weekly","window":"weekly","remainingFraction":0.95}]},
+            {"displayName":"Claude and GPT models","buckets":[{"bucketId":"3p-weekly","window":"weekly","remainingFraction":1.0}]}]}"#;
+        let l = parse_antigravity(starter).unwrap();
+        assert_eq!(
+            l.iter()
+                .map(|l| (l.window, l.pct.round()))
+                .collect::<Vec<_>>(),
+            [(Window::Weekly, 5.0), (Window::OtherWeekly, 0.0)]
+        );
+
+        let blob = r#"{"token":{"access_token":"ya29.a","token_type":"Bearer","refresh_token":"1//r","expiry":"2026-11-18T12:00:00.5+07:00"},"auth_method":"consumer"}"#;
+        assert_eq!(
+            parse_agy_token(blob),
+            Some((
+                "ya29.a".into(),
+                "1//r".into(),
+                iso_to_unix("2026-11-18T05:00:00Z").unwrap()
+            ))
+        );
+        assert_eq!(parse_agy_token(r#"{"token":{}}"#), None);
+        assert_eq!(
+            code_assist_project(r#"{"cloudaicompanionProject":"p-1"}"#).as_deref(),
+            Some("p-1")
+        );
+        assert_eq!(
+            code_assist_project(r#"{"cloudaicompanionProject":{"id":"p-2"}}"#).as_deref(),
+            Some("p-2")
+        );
+    }
+
+    #[test]
+    fn oauth_clients_in_a_binary() {
+        // made-up values, put together here so they don't read as real credentials
+        let host = "googleusercontent";
+        let id = format!(
+            "{}-{}.apps.{host}.com",
+            "1234567890", "abcdefghijklmnop0123"
+        );
+        let secret = format!("{}-{}", "GOCSPX", "abcdefghijklmnopqrstuvwxyz12");
+        let mut bin = format!("\x00junk-12345.apps.{host}.com\x00\x01{id}\x00").into_bytes();
+        bin.extend(format!("{secret}\x00{}-short\x00", "GOCSPX").bytes());
+        assert_eq!(oauth_clients(&bin), [(id, secret)]);
+    }
+
+    #[test]
+    fn deepseek_balance_response() {
+        let b = r#"{"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"110.00","granted_balance":"10.00","topped_up_balance":"100.00"}]}"#;
+        let l = parse_deepseek(b).unwrap();
+        assert_eq!(l[0].text(), "¥110.00");
+        let usd = Balance {
+            currency: "USD".into(),
+            total: 5.2,
+        };
+        assert_eq!(usd.text(), "$5.20");
+        assert_eq!(parse_deepseek(r#"{"balance_infos":[]}"#), None);
+    }
+
+    #[test]
+    fn cursor_session_and_usage() {
+        let jwt = |sub: &str, exp: i64| {
+            let claims =
+                crate::http::base64url(format!(r#"{{"sub":"{sub}","exp":{exp}}}"#).as_bytes());
+            format!("eyJhbGciOiJIUzI1NiJ9.{claims}.c2ln")
+        };
+        let (old, new) = (jwt("auth0|user_old", 100), jwt("auth0|user_01ABC", 200));
+        let mut db = b"\x05cursorAuth/accessToken\x00\x00".to_vec(); // the index entry
+        db.extend(format!("\x07cursorAuth/accessToken{old}\x00").bytes());
+        let wal = format!("..cursorAuth/accessToken{new}\x01");
+        assert_eq!(
+            cursor_token(&[&db, wal.as_bytes()]),
+            Some(("user_01ABC".to_string(), new))
+        );
+        assert_eq!(cursor_token(&[b"nothing here"]), None);
+
+        let b = r#"{"billingCycleStart":"2026-11-02T14:11:55.000Z","billingCycleEnd":"2026-12-02T14:11:55.000Z",
+            "individualUsage":{"plan":{"enabled":true,"used":1500,"limit":2000,"autoPercentUsed":20,"apiPercentUsed":55,"totalPercentUsed":75}}}"#;
+        let l = parse_cursor(b).unwrap();
+        assert_eq!(
+            l.iter().map(|l| (l.window, l.pct)).collect::<Vec<_>>(),
+            [
+                (Window::Included, 75.0),
+                (Window::Auto, 20.0),
+                (Window::Api, 55.0)
+            ]
+        );
+        assert_eq!(l[0].resets, iso_to_unix("2026-12-02T14:11:55Z"));
+        let old_shape = r#"{"individualUsage":{"plan":{"used":500,"limit":2000}}}"#;
+        assert_eq!(parse_cursor(old_shape).unwrap()[0].pct, 25.0);
+        assert_eq!(parse_cursor(r#"{"individualUsage":{}}"#), None);
+        // what the dashboard reads: 4% of the included usage, ending 28 Nov 2026 00:00 UTC
+        let period = r#"{"billingCycleStart":"1793232000000","billingCycleEnd":"1795824000000",
+            "planUsage":{"enabled":true,"totalPercentUsed":4.2,"autoPercentUsed":4.2,"apiPercentUsed":0}}"#;
+        let l = parse_cursor_period(period).unwrap();
+        assert_eq!((l[0].window, l[0].pct), (Window::Included, 4.2));
+        assert_eq!(l[0].resets, iso_to_unix("2026-11-28T00:00:00Z"));
+        assert_eq!(parse_cursor_period(r#"{"planUsage":{}}"#), None);
+    }
+
+    #[test]
+    fn window_abbreviations() {
+        assert_eq!(
+            (Window::Session.abbr(), Window::Weekly.letter()),
+            ("S", "W")
+        );
+        assert_eq!(
+            (Window::Included.abbr(), Window::Included.letter()),
+            ("Inc", "I")
+        );
+        assert!([Window::Opus, Window::Sonnet, Window::Api]
+            .iter()
+            .all(|w| w.abbr().len() <= 3));
     }
 }

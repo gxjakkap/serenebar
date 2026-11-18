@@ -755,6 +755,70 @@ impl Gfx {
         unsafe { self.dc.SetTransform(&m) }
     }
 
+    pub fn transform(&self) -> Matrix3x2 {
+        let mut m = Matrix3x2::default();
+        unsafe { self.dc.GetTransform(&mut m) };
+        m
+    }
+
+    /// A polygon filled with a gradient running from `from` to `to`.
+    pub fn poly_grad(
+        &self,
+        pts: &[(f32, f32)],
+        stops: &[(f32, C)],
+        from: (f32, f32),
+        to: (f32, f32),
+    ) {
+        let s: Vec<D2D1_GRADIENT_STOP> = stops
+            .iter()
+            .map(|&(p, c)| D2D1_GRADIENT_STOP {
+                position: p,
+                color: c,
+            })
+            .collect();
+        unsafe {
+            let rt: &ID2D1RenderTarget = &self.dc;
+            let (Ok(coll), Some(path)) = (
+                rt.CreateGradientStopCollection(&s, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP),
+                self.polygon(pts),
+            ) else {
+                return;
+            };
+            let props = D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
+                startPoint: D2D_POINT_2F {
+                    x: from.0,
+                    y: from.1,
+                },
+                endPoint: D2D_POINT_2F { x: to.0, y: to.1 },
+            };
+            if let Ok(b) = self.dc.CreateLinearGradientBrush(&props, None, &coll) {
+                self.dc.FillGeometry(&path, &b, None);
+            }
+        }
+    }
+
+    fn polygon(&self, pts: &[(f32, f32)]) -> Option<ID2D1PathGeometry1> {
+        unsafe {
+            let path = self.factory.CreatePathGeometry().ok()?;
+            let sink = path.Open().ok()?;
+            sink.BeginFigure(
+                D2D_POINT_2F {
+                    x: pts[0].0,
+                    y: pts[0].1,
+                },
+                D2D1_FIGURE_BEGIN_FILLED,
+            );
+            let rest: Vec<D2D_POINT_2F> = pts[1..]
+                .iter()
+                .map(|&(x, y)| D2D_POINT_2F { x, y })
+                .collect();
+            sink.AddLines(&rest);
+            sink.EndFigure(D2D1_FIGURE_END_CLOSED);
+            sink.Close().ok()?;
+            Some(path)
+        }
+    }
+
     pub fn poly(&self, pts: &[(f32, f32)], c: C) {
         unsafe {
             let Ok(path) = self.factory.CreatePathGeometry() else {
@@ -974,6 +1038,46 @@ impl Gfx {
             )
             .ok()?;
             self.dc.CreateBitmapFromWicBitmap(&conv, None).ok()
+        }
+    }
+
+    /// Decodes a PNG, JPEG or the like, such as an album cover.
+    pub fn bitmap_from_bytes(&self, bytes: &[u8]) -> Option<ID2D1Bitmap1> {
+        unsafe {
+            let stream = self.wic.CreateStream().ok()?;
+            stream.InitializeFromMemory(bytes).ok()?;
+            let dec = self
+                .wic
+                .CreateDecoderFromStream(&stream, std::ptr::null(), WICDecodeMetadataCacheOnDemand)
+                .ok()?;
+            self.bitmap_from_wic(&dec.GetFrame(0).ok()?.cast().ok()?)
+        }
+    }
+
+    /// `b` stretched over a rounded rectangle, its corners cut to the radius.
+    pub fn bitmap_rr(&self, b: &ID2D1Bitmap1, x: f32, y: f32, w: f32, h: f32, r: f32) {
+        unsafe {
+            let props = D2D1_BITMAP_BRUSH_PROPERTIES1 {
+                extendModeX: D2D1_EXTEND_MODE_CLAMP,
+                extendModeY: D2D1_EXTEND_MODE_CLAMP,
+                interpolationMode: D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+            };
+            let Ok(brush) = self.dc.CreateBitmapBrush(b, Some(&props), None) else {
+                return;
+            };
+            let size = b.GetSize();
+            if size.width <= 0.0 || size.height <= 0.0 {
+                return;
+            }
+            brush.SetTransform(&Matrix3x2 {
+                M11: w / size.width,
+                M12: 0.0,
+                M21: 0.0,
+                M22: h / size.height,
+                M31: x,
+                M32: y,
+            });
+            self.dc.FillRoundedRectangle(&rr(x, y, w, h, r), &brush);
         }
     }
 

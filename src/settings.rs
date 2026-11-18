@@ -168,12 +168,22 @@ pub enum Widget {
     Lang,
     Desktop,
     Clock,
-    DateClock,
+    Mic,
+    Network,
+    Theme,
+    Progress,
+    Antigravity,
+    DeepSeek,
+    Cursor,
+    Gmail,
+    Notifications,
+    Date,
 }
 
 impl Widget {
     /// In the order the settings window lists them.
-    pub const ALL: [Widget; 14] = [
+    /// Antigravity isn't offered yet: its numbers didn't match the app's on a Starter plan.
+    pub const ALL: [Widget; 22] = [
         Widget::Weather,
         Widget::Media,
         Widget::System,
@@ -181,13 +191,21 @@ impl Widget {
         Widget::Apps,
         Widget::Claude,
         Widget::Codex,
+        Widget::Cursor,
+        Widget::DeepSeek,
+        Widget::Gmail,
         Widget::Controls,
         Widget::Battery,
         Widget::Tray,
         Widget::Lang,
         Widget::Desktop,
+        Widget::Notifications,
         Widget::Clock,
-        Widget::DateClock,
+        Widget::Date,
+        Widget::Mic,
+        Widget::Network,
+        Widget::Theme,
+        Widget::Progress,
     ];
 
     /// Its name in the settings file.
@@ -206,7 +224,16 @@ impl Widget {
             Widget::Lang => "lang",
             Widget::Desktop => "desktop",
             Widget::Clock => "clock",
-            Widget::DateClock => "dateclock",
+            Widget::Mic => "mic",
+            Widget::Network => "network",
+            Widget::Theme => "theme",
+            Widget::Progress => "progress",
+            Widget::Antigravity => "antigravity",
+            Widget::DeepSeek => "deepseek",
+            Widget::Cursor => "cursor",
+            Widget::Gmail => "gmail",
+            Widget::Notifications => "notifications",
+            Widget::Date => "date",
         }
     }
 
@@ -221,18 +248,56 @@ impl Widget {
             Widget::Codex => "Codex limits",
             Widget::Controls => "Quick controls",
             Widget::Battery => "Battery",
-            Widget::Tray => "Hidden icons",
+            Widget::Tray => "Tray icons",
             Widget::Lang => "Input language",
             Widget::Desktop => "Show desktop",
             Widget::Clock => "Clock",
-            Widget::DateClock => "Tear-off clock",
+            Widget::Mic => "Mute and deafen",
+            Widget::Network => "Network speed",
+            Widget::Theme => "Light and dark",
+            Widget::Progress => "Day, month, year",
+            Widget::Antigravity => "Antigravity limits",
+            Widget::DeepSeek => "DeepSeek balance",
+            Widget::Cursor => "Cursor usage",
+            Widget::Gmail => "Gmail unread",
+            Widget::Notifications => "Notifications",
+            Widget::Date => "Date",
+        }
+    }
+
+    /// One line on what the tile does, for the widget picker.
+    pub fn blurb(self) -> &'static str {
+        match self {
+            Widget::Weather => "Conditions and temperature",
+            Widget::Media => "What's playing, with controls",
+            Widget::System => "CPU and memory in use",
+            Widget::Start => "Opens the Start menu",
+            Widget::Apps => "Pinned and open apps",
+            Widget::Claude => "Claude plan limits",
+            Widget::Codex => "Codex plan limits",
+            Widget::Antigravity => "Gemini plan limits",
+            Widget::Cursor => "Cursor plan usage",
+            Widget::DeepSeek => "DeepSeek API balance",
+            Widget::Gmail => "Unread mail in your inbox",
+            Widget::Controls => "Wi-Fi, volume and more",
+            Widget::Battery => "Charge and charging",
+            Widget::Tray => "The notification-area icons",
+            Widget::Lang => "The keyboard layout",
+            Widget::Desktop => "Hides or brings back windows",
+            Widget::Notifications => "Opens the notification centre",
+            Widget::Clock => "The time and date",
+            Widget::Date => "Today's date",
+            Widget::Mic => "Mute the mic and the speakers",
+            Widget::Network => "Download and upload speed",
+            Widget::Theme => "Switches light and dark mode",
+            Widget::Progress => "Day, month and year gone",
         }
     }
 
     /// The group a tile joins when it is switched on: 0 left, 1 centre, 2 right (of `GROUPS`).
     pub fn home_group(self) -> usize {
         match self {
-            Widget::Weather | Widget::Media | Widget::System => 0,
+            Widget::Weather | Widget::Media | Widget::System | Widget::Network => 0,
             Widget::Start | Widget::Apps => 1,
             _ => 2,
         }
@@ -240,6 +305,58 @@ impl Widget {
 
     pub fn parse(id: &str) -> Option<Widget> {
         Widget::ALL.into_iter().find(|w| w.id() == id)
+    }
+
+    /// The looks a tile comes in, the default first. Empty for tiles with only one.
+    pub fn variants(self) -> &'static [Variant] {
+        use Variant::*;
+        match self {
+            Widget::Clock => &[Large, Medium, Small, SmallSeconds],
+            Widget::Media => &[Large, ExtraLarge, Medium, Small],
+            Widget::Date => &[FullDate, DayNumber],
+            Widget::Claude | Widget::Codex | Widget::Antigravity | Widget::Cursor => {
+                &[Large, Medium, Small]
+            }
+            _ => &[],
+        }
+    }
+}
+
+/// One of the looks a tile comes in, picked per tile in Settings.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Variant {
+    ExtraLarge,
+    Large,
+    Medium,
+    Small,
+    SmallSeconds,
+    FullDate,
+    DayNumber,
+}
+
+impl Variant {
+    pub const ALL: [Variant; 7] = [
+        Variant::ExtraLarge,
+        Variant::Large,
+        Variant::Medium,
+        Variant::Small,
+        Variant::SmallSeconds,
+        Variant::FullDate,
+        Variant::DayNumber,
+    ];
+    pub fn id(self) -> &'static str {
+        ["xl", "l", "m", "s", "ss", "full", "day"][self as usize]
+    }
+    pub fn label(self) -> &'static str {
+        [
+            "Extra large",
+            "Large",
+            "Medium",
+            "Small",
+            "Small with seconds",
+            "Full date",
+            "Day number",
+        ][self as usize]
     }
 }
 
@@ -259,23 +376,43 @@ pub enum Control {
     Wifi,
     Bluetooth,
     Vpn,
+    Airplane,
+    Hotspot,
     Volume,
     Battery,
 }
 
 impl Control {
-    pub const ALL: [Control; 5] = [
+    pub const ALL: [Control; 7] = [
         Control::Wifi,
         Control::Bluetooth,
         Control::Vpn,
+        Control::Airplane,
+        Control::Hotspot,
         Control::Volume,
         Control::Battery,
     ];
     pub fn id(self) -> &'static str {
-        ["wifi", "bluetooth", "vpn", "volume", "battery"][self as usize]
+        [
+            "wifi",
+            "bluetooth",
+            "vpn",
+            "airplane",
+            "hotspot",
+            "volume",
+            "battery",
+        ][self as usize]
     }
     pub fn label(self) -> &'static str {
-        ["Wi-Fi", "Bluetooth", "VPN", "Volume", "Battery"][self as usize]
+        [
+            "Wi-Fi",
+            "Bluetooth",
+            "VPN",
+            "Airplane",
+            "Hotspot",
+            "Volume",
+            "Battery",
+        ][self as usize]
     }
 }
 
@@ -290,6 +427,8 @@ pub struct Settings {
     pub clock24: bool,
     pub hide_taskbar: bool,
     pub widgets: Vec<Slot>,
+    /// The look picked for each tile that has a choice. Tiles not listed use their first.
+    pub variants: Vec<(Widget, Variant)>,
     pub controls: Vec<Control>, // in Control::ALL order
     pub app_order: Vec<String>, // dock order the user dragged apps into, by app key
     /// Dock pins: shortcut paths, exe paths or `shell:AppsFolder\\<id>`.
@@ -300,6 +439,8 @@ pub struct Settings {
     /// secret as not confidential, so it lives here; the refresh token is kept encrypted elsewhere.
     pub google_id: String,
     pub google_secret: String,
+    /// DeepSeek API key, encrypted with DPAPI for this Windows account and base64'd.
+    pub deepseek_key: String,
     pub lat: Option<f64>,
     pub lon: Option<f64>,
     pub fahrenheit: bool,
@@ -326,6 +467,7 @@ impl Default for Settings {
             clock24: true,
             hide_taskbar: false,
             widgets,
+            variants: vec![],
             controls: vec![
                 Control::Wifi,
                 Control::Bluetooth,
@@ -338,6 +480,7 @@ impl Default for Settings {
             calendar: String::new(),
             google_id: String::new(),
             google_secret: String::new(),
+            deepseek_key: String::new(),
             lat: None,
             lon: None,
             fahrenheit: false,
@@ -388,14 +531,36 @@ impl Settings {
                 "clock" => s.clock24 = v != "12",
                 "taskbar" => s.hide_taskbar = v == "hidden",
                 "widgets" => {
-                    s.widgets = list(v, ',')
-                        .iter()
-                        .filter_map(|w| {
-                            if w == "|" {
-                                Some(Slot::Break)
-                            } else {
-                                Widget::parse(w).map(Slot::Tile)
+                    s.widgets = vec![];
+                    for w in list(v, ',') {
+                        // the tear-off clock was its own tile before clocks had looks; the
+                        // medium clock took its place
+                        let slot = match w.as_str() {
+                            "|" => Some(Slot::Break),
+                            "dateclock" => {
+                                s.variants.push((Widget::Clock, Variant::Medium));
+                                Some(Slot::Tile(Widget::Clock))
                             }
+                            _ => Widget::parse(&w).map(Slot::Tile),
+                        };
+                        if let Some(slot) =
+                            slot.filter(|t| *t == Slot::Break || !s.widgets.contains(t))
+                        {
+                            s.widgets.push(slot);
+                        }
+                    }
+                }
+                "variants" => {
+                    s.variants = list(v, ',')
+                        .iter()
+                        .filter_map(|p| {
+                            let (w, x) = p.split_once(':')?;
+                            let x = if x == "tearoff" { "m" } else { x };
+                            let (w, x) = (
+                                Widget::parse(w)?,
+                                Variant::ALL.into_iter().find(|x2| x2.id() == x)?,
+                            );
+                            w.variants().contains(&x).then_some((w, x))
                         })
                         .collect()
                 }
@@ -412,6 +577,7 @@ impl Settings {
                 "calendar" => s.calendar = v.to_string(),
                 "google_client_id" => s.google_id = v.to_string(),
                 "google_client_secret" => s.google_secret = v.to_string(),
+                "deepseek_key" => s.deepseek_key = v.to_string(),
                 "latitude" => s.lat = v.parse().ok(),
                 "longitude" => s.lon = v.parse().ok(),
                 "units" => s.fahrenheit = v == "f",
@@ -434,19 +600,27 @@ impl Settings {
             })
             .collect();
         let controls: Vec<&str> = self.controls.iter().map(|c| c.id()).collect();
+        let variants: Vec<String> = self
+            .variants
+            .iter()
+            .map(|(w, x)| format!("{}:{}", w.id(), x.id()))
+            .collect();
         format!(
-            "style={}\nsize={}\nedge={}\nwidth={}\nmonitors={}\naccent={}\nclock={}\ntaskbar={}\nupdates={}\nwidgets={}\ncontrols={}\napp_order={}\npins={}\n\
+            "style={}\nsize={}\nedge={}\nwidth={}\nmonitors={}\naccent={}\nclock={}\ntaskbar={}\nupdates={}\nwidgets={}\nvariants={}\ncontrols={}\napp_order={}\npins={}\n\
              # weather: a city name, or latitude/longitude in decimal degrees to override it. units is c or f.\n\
              city={}\nlatitude={}\nlongitude={}\nunits={}\n\
              # calendar: the secret iCal (.ics) link from Google, Outlook or iCloud\ncalendar={}\n\
              # Google Calendar sign-in: an OAuth client (Desktop app) from your Google Cloud project\n\
-             google_client_id={}\ngoogle_client_secret={}\n",
+             google_client_id={}\ngoogle_client_secret={}\n\
+             # DeepSeek API key, encrypted so only this Windows account can read it. Set it in Settings.\n\
+             deepseek_key={}\n",
             self.style.name(), self.size.id(), if self.top { "top" } else { "bottom" },
             if self.full { "full" } else { "pill" }, if self.every_monitor { "all" } else { "primary" }, ACCENTS[self.accent].1.to_lowercase(),
             if self.clock24 { 24 } else { 12 }, if self.hide_taskbar { "hidden" } else { "autohide" },
             if self.auto_update { "auto" } else { "manual" },
-            widgets.join(","), controls.join(","), self.app_order.join("|"), self.pins.join("|"), self.city, opt(self.lat), opt(self.lon),
+            widgets.join(","), variants.join(","), controls.join(","), self.app_order.join("|"), self.pins.join("|"), self.city, opt(self.lat), opt(self.lon),
             if self.fahrenheit { "f" } else { "c" }, self.calendar, self.google_id, self.google_secret,
+            self.deepseek_key,
         )
     }
 
@@ -466,6 +640,28 @@ impl Settings {
 
     pub fn shows(&self, w: Widget) -> bool {
         self.widgets.contains(&Slot::Tile(w))
+    }
+
+    /// The look of tile `w`: the one picked, else its first.
+    pub fn variant(&self, w: Widget) -> Variant {
+        self.variants
+            .iter()
+            .find(|v| v.0 == w)
+            .map(|v| v.1)
+            .or(w.variants().first().copied())
+            .unwrap_or(Variant::Large)
+    }
+
+    /// Gives tile `w` the look `x`. Its first look is the default, so that one isn't written.
+    pub fn set_variant(&mut self, w: Widget, x: Variant) {
+        let all = w.variants();
+        if !all.contains(&x) {
+            return;
+        }
+        self.variants.retain(|v| v.0 != w);
+        if x != all[0] {
+            self.variants.push((w, x));
+        }
     }
 }
 
@@ -612,6 +808,8 @@ mod tests {
             (g2.google_id.as_str(), g2.google_secret.as_str()),
             ("123.apps.googleusercontent.com", "GOCSPX-x")
         );
+        let k = parse_test("deepseek_key=AQAAANCMnd8B+/=");
+        assert_eq!(parse_test(&k.to_ini()).deepseek_key, "AQAAANCMnd8B+/=");
         let d = parse_test("garbage\nstyle=nope");
         assert!(d.style == Style::Lagoon && d.size == Size::M);
         assert_eq!(
@@ -729,5 +927,29 @@ mod tests {
         );
         assert_eq!(s.pins.len(), 3);
         assert_eq!(parse_test(&s.to_ini()).pins, s.pins);
+    }
+
+    #[test]
+    fn variants_roundtrip_and_old_tear_off_clock() {
+        let old = parse_test("widgets=clock,dateclock,|,apps");
+        assert_eq!(
+            old.widgets,
+            [Slot::Tile(Clock), Slot::Break, Slot::Tile(Apps)]
+        );
+        assert_eq!(old.variant(Clock), Variant::Medium);
+        assert_eq!(
+            parse_test("variants=clock:tearoff").variant(Clock),
+            Variant::Medium
+        );
+        let mut s = parse_test("variants=clock:s,apps:xl,nope:l,clock:zz");
+        assert_eq!(s.variants, [(Clock, Variant::Small)]); // apps has no looks
+        assert_eq!(parse_test(&s.to_ini()).variant(Clock), Variant::Small);
+        assert_eq!(s.variant(Media), Variant::Large);
+        s.set_variant(Clock, Variant::Medium);
+        assert_eq!(s.variants, [(Clock, Variant::Medium)]);
+        s.set_variant(Clock, Variant::ExtraLarge); // not one of the clock's
+        assert_eq!(s.variant(Clock), Variant::Medium);
+        s.set_variant(Clock, Variant::Large);
+        assert!(s.variant(Clock) == Variant::Large && s.variants.is_empty());
     }
 }

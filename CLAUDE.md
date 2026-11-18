@@ -17,17 +17,19 @@ src/dock.rs      window/bar geometry and the magnification curve
 src/glass.rs     glass parameters per style and the displacement map
 src/system.rs    CPU, memory, battery, keyboard layout, keys, clock, startup key
 src/taskbar.rs   hiding Explorer's taskbar and aligning Start
+src/net.rs       network speed from the adapters' byte counters
 src/controls.rs  media session, Wi-Fi/Bluetooth radios, VPN, volume
 src/feeds.rs     background fetching of weather, calendar, limits and releases
 src/update.rs    update check: the latest GitHub release against this build's version
-src/tray.rs      hidden-icons host: receives tray icons, forwards everything to Explorer
+src/tray.rs      tray icons host: receives tray icons, forwards everything to Explorer
 src/gfx.rs       D3D11/DComp/D2D setup, glass pipeline, drawing primitives, image cache
 src/ui.rs        themes, metrics, layout and every bar tile
-src/panel.rs     calendar, weather, AI, quick controls, about and hidden-icons popovers
+src/panel.rs     calendar, weather, AI, quick controls, about and tray icons popovers
 src/prefs.rs     the settings window and its editing state
 src/app.rs       windows and input, one action dispatcher, one settings pipeline
 build.rs         embeds icons/serenebar.ico into the exe (Windows targets)
 icons/           app icon: serenebar.svg is the source; PNGs and the .ico are rendered from it
+icons/brands/    the AI labs' marks, built into the exe for their tiles
 prek.toml        git hooks: fmt and clippy before commit, commit message rules
 committed.toml   conventional-commit rules for the commit-msg hook
 ```

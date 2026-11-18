@@ -122,6 +122,20 @@ mod win {
         run_curl("-fsS", url, Some((&args, json)))
     }
 
+    /// POSTs a JSON body with `headers` on stdin. The body goes on the command line, so it
+    /// must hold nothing secret.
+    pub fn curl_post(url: &str, headers: &str, json: &str) -> Option<String> {
+        let args = [
+            "-H",
+            "@-",
+            "-H",
+            "Content-Type: application/json",
+            "--data-binary",
+            json,
+        ];
+        run_curl("-fsS", url, Some((&args, headers)))
+    }
+
     /// Saves `url` to `path`, following redirects (GitHub's asset links redirect).
     pub fn download(url: &str, path: &std::path::Path) -> bool {
         use std::os::windows::process::CommandExt;

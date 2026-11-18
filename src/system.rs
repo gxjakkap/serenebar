@@ -170,3 +170,110 @@ pub fn set_startup(on: bool) {
         }
     }
 }
+
+const PERSONALIZE: PCWSTR = w!(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+
+/// Whether apps are in light mode. None when Windows hasn't recorded a choice.
+pub fn light_theme() -> Option<bool> {
+    use windows::Win32::System::Registry::*;
+    let mut v = 0u32;
+    let mut size = 4u32;
+    unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            PERSONALIZE,
+            w!("AppsUseLightTheme"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut v as *mut u32 as _),
+            Some(&mut size),
+        )
+        .ok()
+        .ok()?;
+    }
+    Some(v != 0)
+}
+
+/// Switches apps and the taskbar between light and dark, as the Settings app does.
+pub fn toggle_theme() {
+    use windows::Win32::System::Registry::*;
+    let light = u32::from(!light_theme().unwrap_or(true));
+    for name in [w!("AppsUseLightTheme"), w!("SystemUsesLightTheme")] {
+        unsafe {
+            let _ = RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                PERSONALIZE,
+                name,
+                REG_DWORD.0,
+                Some(&light as *const u32 as _),
+                4,
+            );
+        }
+    }
+    // a hung window would hold the broadcast up, so it goes out on its own thread
+    std::thread::spawn(|| unsafe {
+        let topic = w!("ImmersiveColorSet");
+        SendMessageTimeoutW(
+            HWND_BROADCAST,
+            WM_SETTINGCHANGE,
+            WPARAM(0),
+            LPARAM(topic.as_ptr() as isize),
+            SMTO_ABORTIFHUNG,
+            1000,
+            None,
+        );
+    });
+}
+
+/// Encrypts (`protect`) or decrypts `data` with DPAPI, for this Windows account only.
+pub fn dpapi(data: &[u8], protect: bool) -> Option<Vec<u8>> {
+    use windows::Win32::Security::Cryptography::*;
+    let input = CRYPT_INTEGER_BLOB {
+        cbData: data.len() as u32,
+        pbData: data.as_ptr() as *mut u8,
+    };
+    let mut out = CRYPT_INTEGER_BLOB::default();
+    unsafe {
+        if protect {
+            CryptProtectData(
+                &input,
+                None,
+                None,
+                None,
+                None,
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut out,
+            )
+            .ok()?;
+        } else {
+            CryptUnprotectData(
+                &input,
+                None,
+                None,
+                None,
+                None,
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut out,
+            )
+            .ok()?;
+        }
+        let bytes = std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec();
+        let _ = LocalFree(HLOCAL(out.pbData as _));
+        Some(bytes)
+    }
+}
+
+/// A secret encrypted for this Windows account, as base64 for the settings file.
+pub fn protect(secret: &str) -> String {
+    dpapi(secret.as_bytes(), true)
+        .map(|b| crate::http::base64(&b))
+        .unwrap_or_default()
+}
+
+/// What `protect` encrypted, or empty when it can't be read here (another account, say).
+pub fn unprotect(stored: &str) -> String {
+    crate::http::base64_decode(stored)
+        .and_then(|b| dpapi(&b, false))
+        .and_then(|b| String::from_utf8(b).ok())
+        .unwrap_or_default()
+}

@@ -16,7 +16,8 @@ pub struct State {
     pub hover: Option<usize>, // hidden-icons panel: the icon under the cursor
     pub over: Option<Act>,    // the control under the cursor
     pub month: (i32, u32),
-    pub selected: i64, // day shown in the calendar's side list
+    pub selected: i64,   // day shown in the calendar's side list
+    pub app_rows: usize, // quick controls: app volume rows the panel was sized for
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -40,6 +41,7 @@ impl State {
             over: None,
             month: (today.year, today.month),
             selected: today.days(),
+            app_rows: 0,
         }
     }
 
@@ -63,18 +65,41 @@ impl State {
 }
 
 fn limits(kind: Panel, d: &Data) -> &[Limit] {
+    d.limits(kind).unwrap_or(&[])
+}
+
+/// An AI panel's name, what to do when it has nothing, and where its numbers come from.
+fn ai_text(kind: Panel) -> (&'static str, &'static str, &'static str) {
     match kind {
-        Panel::Claude => d.claude.as_deref().unwrap_or(&[]),
-        _ => d.codex.as_deref().unwrap_or(&[]),
+        Panel::Claude => (
+            "Claude",
+            "Sign in to Claude Code on this PC.",
+            "From Claude Code's sign-in on this PC",
+        ),
+        Panel::Cursor => (
+            "Cursor",
+            "Sign in to Cursor on this PC.",
+            "From Cursor's sign-in, this usage period",
+        ),
+        Panel::Antigravity => (
+            "Antigravity",
+            "Sign in to the Antigravity CLI (agy) on this PC.",
+            "From the agy CLI's sign-in, Gemini models first",
+        ),
+        _ => (
+            "Codex",
+            "Run Codex CLI once on this PC.",
+            "From Codex CLI's session logs",
+        ),
     }
 }
 
 /// The volume slider takes presses a little past its ends.
 const SLIDER_SLACK: f32 = 10.0;
 
-/// The level the volume slider in `hits` would set with the cursor at `x`, even outside it.
-pub fn volume_at(hits: &[Hit], x: f32) -> Option<f32> {
-    let (hx, hw) = crate::ui::hit_span(hits, Act::Do(Action::Volume))?;
+/// The level the volume slider for `act` would set with the cursor at `x`, even outside it.
+pub fn volume_at(hits: &[Hit], act: Action, x: f32) -> Option<f32> {
+    let (hx, hw) = crate::ui::hit_span(hits, Act::Do(act))?;
     Some((x - hx - SLIDER_SLACK) / (hw - 2.0 * SLIDER_SLACK))
 }
 
@@ -87,8 +112,20 @@ const TRAY_TIP: f32 = 48.0;
 const AI_TOP: f32 = 72.0;
 const AI_ROW: f32 = 56.0;
 const AI_SOURCE: f32 = 34.0;
-const CONTROLS_ROWS: [f32; 4] = [56.0, 116.0, 84.0, 82.0]; // title, now playing, toggles, volume
+const CONTROLS_ROWS: [f32; 4] = [56.0, 116.0, 164.0, 82.0]; // title, now playing, toggles, volume
 const BATTERY_ROW: f32 = 30.0;
+const APP_ROW: f32 = 44.0;
+/// At most this many apps get a volume slider, so the panel stays on screen.
+pub const APP_ROWS: usize = 6;
+
+/// Room the app volume card takes for `rows` apps.
+fn apps_h(rows: usize) -> f32 {
+    if rows == 0 {
+        0.0
+    } else {
+        rows as f32 * APP_ROW + 20.0
+    }
+}
 const FOOTER: f32 = 48.0;
 
 pub fn size(kind: Panel, d: &Data) -> (f32, f32) {
@@ -99,7 +136,7 @@ pub fn size(kind: Panel, d: &Data) -> (f32, f32) {
         ),
         Panel::Calendar => (660.0, 470.0),
         Panel::Weather => (320.0, 404.0),
-        Panel::Claude | Panel::Codex => (
+        Panel::Claude | Panel::Codex | Panel::Antigravity | Panel::Cursor => (
             300.0,
             AI_TOP + limits(kind, d).len().max(1) as f32 * AI_ROW + AI_SOURCE,
         ),
@@ -107,6 +144,7 @@ pub fn size(kind: Panel, d: &Data) -> (f32, f32) {
         Panel::Controls => (
             340.0,
             CONTROLS_ROWS.iter().sum::<f32>()
+                + apps_h(d.app_volumes.len().min(APP_ROWS))
                 + if d.battery.is_some() {
                     BATTERY_ROW
                 } else {
@@ -129,7 +167,9 @@ pub fn draw(g: &Gfx, st: &State, d: &Data, s: &Settings, w: f32, h: f32) -> Vec<
     match st.kind {
         Panel::Calendar => calendar(g, &p, st, d, accent, link, s.clock24, w, h, &mut hits),
         Panel::Weather => weather(g, &p, d, w),
-        Panel::Claude | Panel::Codex => ai(g, &p, st.kind, d, w, h),
+        Panel::Claude | Panel::Codex | Panel::Antigravity | Panel::Cursor => {
+            ai(g, &p, st.kind, d, w, h)
+        }
         Panel::Controls => controls(g, &p, st, d, accent, link, w, h, &mut hits),
         Panel::About => about(g, &p, st, d, accent, link, w, h, &mut hits),
         Panel::Tray => tray(g, &p, st, d, w, h, &mut hits),
@@ -554,11 +594,7 @@ fn weather(g: &Gfx, p: &Pal, d: &Data, w: f32) {
 }
 
 fn ai(g: &Gfx, p: &Pal, kind: Panel, d: &Data, w: f32, h: f32) {
-    let name = if kind == Panel::Claude {
-        "Claude"
-    } else {
-        "Codex"
-    };
+    let (name, hint, src) = ai_text(kind);
     ai_logo(g, kind, 22.0, 18.0, 34.0);
     g.text(
         name,
@@ -584,11 +620,6 @@ fn ai(g: &Gfx, p: &Pal, kind: Panel, d: &Data, w: f32, h: f32) {
     );
     let rows = limits(kind, d);
     if rows.is_empty() {
-        let hint = if kind == Panel::Claude {
-            "Sign in to Claude Code on this PC."
-        } else {
-            "Run Codex CLI once on this PC."
-        };
         g.text(
             hint,
             22.0,
@@ -649,11 +680,6 @@ fn ai(g: &Gfx, p: &Pal, kind: Panel, d: &Data, w: f32, h: f32) {
             Align::Left,
         );
     }
-    let src = if kind == Panel::Claude {
-        "From Claude Code's sign-in on this PC"
-    } else {
-        "From Codex CLI's session logs"
-    };
     g.text(
         src,
         22.0,
@@ -680,7 +706,6 @@ fn controls(
     h: f32,
     hits: &mut Vec<Hit>,
 ) {
-    let white = rgba(0xFFFFFF, 1.0);
     let (x, cw) = (16.0, w - 32.0);
     g.text(
         "Quick controls",
@@ -750,20 +775,24 @@ fn controls(
     // VPN profiles can be switched from here
     y += CONTROLS_ROWS[1];
     let muted = d.volume.as_ref().is_some_and(|v| v.muted);
-    let bw = (cw - 24.0) / 4.0;
+    let bw = (cw - 16.0) / 3.0;
     let toggles = [
         ("Wi-Fi", Action::Wifi),
         ("Bluetooth", Action::Bluetooth),
         ("VPN", Action::Vpn),
+        ("Airplane", Action::Airplane),
+        ("Hotspot", Action::Hotspot),
         ("Mute", Action::Mute),
     ];
+    let row_y = y;
     for (i, (label, act)) in toggles.into_iter().enumerate() {
         let on = if act == Action::Mute {
             Some(muted)
         } else {
             d.radio(act)
         };
-        let bx = x + i as f32 * (bw + 8.0);
+        let bx = x + (i % 3) as f32 * (bw + 8.0);
+        let y = row_y + (i / 3) as f32 * 80.0;
         let lit = on == Some(true);
         g.fill_rr(bx, y, bw, 72.0, 14.0, if lit { accent } else { p.card });
         hover(g, p, st, Act::Do(act), bx, y, bw, 72.0, 14.0);
@@ -827,26 +856,61 @@ fn controls(
         Align::Right,
     );
     speaker_glyph(g, x + 26.0, y + 46.0, 18.0, muted, p.text);
-    let (tx, tw, ty) = (x + 50.0, cw - 72.0, y + 46.0);
-    g.fill_rr(tx, ty - 2.5, tw, 5.0, 2.5, p.border);
-    g.fill_rr(
-        tx,
-        ty - 2.5,
-        tw * level,
-        5.0,
-        2.5,
-        if muted { p.sub } else { accent },
-    );
-    g.fill_circle(tx + tw * level, ty, 9.0, white);
-    g.arc(tx + tw * level, ty, 9.0, 1.0, p.border, 1.0);
-    hits.push((
-        tx - SLIDER_SLACK,
-        ty - 16.0,
-        tw + 2.0 * SLIDER_SLACK,
-        32.0,
-        Act::Do(Action::Volume),
-    ));
+    let s = (x + 50.0, cw - 72.0, y + 46.0);
+    slider(g, p, accent, s, level, muted, Action::Volume, hits);
     y += CONTROLS_ROWS[3];
+
+    // each app's own volume, under the device's
+    let apps = &d.app_volumes[..d.app_volumes.len().min(st.app_rows)];
+    if !apps.is_empty() {
+        g.fill_rr(x, y - 6.0, cw, apps_h(apps.len()) - 12.0, 14.0, p.card);
+        for (i, a) in apps.iter().enumerate() {
+            let ry = y + i as f32 * APP_ROW;
+            let mute = Act::Do(Action::AppMute(i));
+            hover(g, p, st, mute, x + 6.0, ry + 4.0, 40.0, APP_ROW - 8.0, 10.0);
+            speaker_glyph(g, x + 26.0, ry + APP_ROW / 2.0, 15.0, a.muted, p.text);
+            hits.push((x + 6.0, ry + 4.0, 40.0, APP_ROW - 8.0, mute));
+            g.text(
+                &a.name,
+                x + 50.0,
+                ry + 2.0,
+                cw - 130.0,
+                18.0,
+                11.0,
+                600,
+                p.sub,
+                Align::Left,
+            );
+            let pct = if a.muted {
+                "Muted".to_string()
+            } else {
+                format!("{:.0}%", a.level * 100.0)
+            };
+            g.text(
+                &pct,
+                x + cw - 70.0,
+                ry + 2.0,
+                54.0,
+                18.0,
+                11.0,
+                600,
+                p.text,
+                Align::Right,
+            );
+            let s = (x + 50.0, cw - 72.0, ry + 30.0);
+            slider(
+                g,
+                p,
+                accent,
+                s,
+                a.level,
+                a.muted,
+                Action::AppVolume(i),
+                hits,
+            );
+        }
+        y += apps_h(apps.len());
+    }
 
     if let Some((f, charging)) = d.battery {
         let state = if charging { "Charging" } else { "On battery" };
@@ -983,8 +1047,8 @@ fn about(
         "Rust and Direct2D, no browser engine inside.",
         "",
         "Weather from Open-Meteo, updates from GitHub.",
-        "Claude and Codex limits are read from their",
-        "apps on this PC.",
+        "AI plan limits are read from the sign-ins their",
+        "apps keep on this PC.",
     ];
     for (i, l) in lines.iter().enumerate() {
         g.text(
@@ -1030,7 +1094,7 @@ fn about(
 /// Notification-area icons in a grid. The name of the one under the cursor shows at the bottom.
 fn tray(g: &Gfx, p: &Pal, st: &State, d: &Data, w: f32, h: f32, hits: &mut Vec<Hit>) {
     g.text(
-        "Hidden icons",
+        "Tray icons",
         20.0,
         16.0,
         w - 70.0,
@@ -1092,4 +1156,30 @@ fn tray(g: &Gfx, p: &Pal, st: &State, d: &Data, w: f32, h: f32, hits: &mut Vec<H
         color,
         Align::Left,
     );
+}
+
+/// A volume slider along `(x, width, y)`, dragged or clicked. Muted, it shows its level greyed.
+fn slider(
+    g: &Gfx,
+    p: &Pal,
+    accent: C,
+    (tx, tw, ty): (f32, f32, f32),
+    level: f32,
+    muted: bool,
+    act: Action,
+    hits: &mut Vec<Hit>,
+) {
+    let level = level.clamp(0.0, 1.0);
+    g.fill_rr(tx, ty - 2.5, tw, 5.0, 2.5, p.border);
+    let fill = if muted { p.sub } else { accent };
+    g.fill_rr(tx, ty - 2.5, tw * level, 5.0, 2.5, fill);
+    g.fill_circle(tx + tw * level, ty, 9.0, rgba(0xFFFFFF, 1.0));
+    g.arc(tx + tw * level, ty, 9.0, 1.0, p.border, 1.0);
+    hits.push((
+        tx - SLIDER_SLACK,
+        ty - 16.0,
+        tw + 2.0 * SLIDER_SLACK,
+        32.0,
+        Act::Do(act),
+    ));
 }

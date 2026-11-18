@@ -281,9 +281,14 @@ mod win {
     }
 
     fn exe_of(h: HWND) -> Option<String> {
+        let mut pid = 0;
+        unsafe { GetWindowThreadProcessId(h, Some(&mut pid)) };
+        exe_of_pid(pid)
+    }
+
+    /// The full path of a process's program.
+    pub fn exe_of_pid(pid: u32) -> Option<String> {
         unsafe {
-            let mut pid = 0;
-            GetWindowThreadProcessId(h, Some(&mut pid));
             let p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
             let mut buf = [0u16; 520];
             let mut len = buf.len() as u32;
@@ -381,6 +386,30 @@ mod win {
         name.trim_end_matches(".lnk")
             .trim_end_matches(".exe")
             .to_string()
+    }
+
+    /// System.FileDescription: the name a program gives itself, like "Google Chrome".
+    const PKEY_FILE_DESCRIPTION: PROPERTYKEY = PROPERTYKEY {
+        fmtid: GUID::from_u128(0x0CEF7D53_FA64_11D1_A203_0000F81FEDEE),
+        pid: 3,
+    };
+
+    /// What the volume mixer calls a program: its description, else its file name.
+    pub fn exe_name(path: &str) -> String {
+        let desc = unsafe {
+            SHCreateItemFromParsingName::<_, _, IShellItem2>(&HSTRING::from(path), None)
+                .and_then(|si| si.GetString(&PKEY_FILE_DESCRIPTION))
+                .ok()
+                .and_then(|p| {
+                    let s = p.to_string().ok();
+                    CoTaskMemFree(Some(p.0 as _));
+                    s
+                })
+        };
+        desc.filter(|d| !d.trim().is_empty()).unwrap_or_else(|| {
+            let file = path.rsplit('\\').next().unwrap_or(path);
+            file.trim_end_matches(".exe").to_string()
+        })
     }
 
     /// Asks every window of the app to close, like "Close all windows" on the taskbar.

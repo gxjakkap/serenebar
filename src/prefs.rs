@@ -12,6 +12,7 @@ pub enum Field {
     Calendar,
     GoogleId,
     GoogleSecret,
+    DeepSeek,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -32,6 +33,9 @@ pub enum Act {
     Remove(usize),
     Add(usize), // a group's +: pick a hidden widget to show there
     Drag(usize),
+    Variant(usize),   // a widget row's look: pick another from a menu
+    AddWidget(usize), // a card in the widget picker: show that row's widget
+    ClosePicker,
     Control(Control),
     Focus(Field),
     Pick(usize),
@@ -60,7 +64,7 @@ impl Tab {
     const ALL: [Tab; 4] = [Tab::Appearance, Tab::Dock, Tab::Widgets, Tab::Feeds];
 
     fn title(self) -> &'static str {
-        ["Appearance", "Dock", "Widgets", "Weather & Calendar"][self as usize]
+        ["Appearance", "Dock", "Widgets", "Feeds & accounts"][self as usize]
     }
 }
 
@@ -68,13 +72,16 @@ impl Tab {
 pub struct State {
     pub tab: Tab,
     pub rows: Vec<WidgetRow>,
-    fields: [String; 4], // indexed by Field
+    fields: [String; 5], // indexed by Field
     pub focus: Option<Field>,
     caret: usize,     // in chars
     select_all: bool, // Ctrl+A: the next edit replaces the whole field
     drag: Option<RowDrag>,
     pub places: Vec<crate::weather::Place>, // suggestions under the city field
     pub over: Option<Act>,                  // the control under the cursor
+    /// The widget picker, open over the Widgets page for the group whose + was pressed.
+    pub picker: Option<usize>,
+    pub picker_scroll: f32, // DIPs the picker's grid is scrolled down
 }
 
 /// A widget row held by its grip. `moved` turns a press into a drag after a few pixels.
@@ -167,6 +174,7 @@ impl State {
                 s.calendar.clone(),
                 s.google_id.clone(),
                 s.google_secret.clone(),
+                crate::system::unprotect(&s.deepseek_key),
             ],
             focus: None,
             caret: 0,
@@ -174,6 +182,8 @@ impl State {
             drag: None,
             places: vec![],
             over: None,
+            picker: None,
+            picker_scroll: 0.0,
         }
     }
 
@@ -187,6 +197,15 @@ impl State {
         s.calendar = self.get(Field::Calendar).to_string();
         s.google_id = self.get(Field::GoogleId).to_string();
         s.google_secret = self.get(Field::GoogleSecret).to_string();
+        // encrypting gives new bytes each time, so only a changed key is written
+        let key = self.get(Field::DeepSeek);
+        if key != crate::system::unprotect(&s.deepseek_key) {
+            s.deepseek_key = if key.is_empty() {
+                String::new()
+            } else {
+                crate::system::protect(key)
+            };
+        }
     }
 
     /// A text field as typed, trimmed.
@@ -285,6 +304,18 @@ impl State {
         self.focus = None;
         self.places.clear();
         Some(p)
+    }
+
+    /// Opens the widget picker for `group`, scrolled to the top.
+    pub fn open_picker(&mut self, group: usize) {
+        (self.picker, self.picker_scroll) = (Some(group), 0.0);
+    }
+
+    /// Scrolls the picker by `dy` DIPs, as far as its cards go in a window `h` tall.
+    pub fn scroll_picker(&mut self, dy: f32, h: f32) {
+        let cards = self.rows.iter().filter(|r| !r.on).count();
+        let max = (PICK_TOP + cards.div_ceil(3) as f32 * PICK_STEP - (h - PICK_BOTTOM)).max(0.0);
+        self.picker_scroll = (self.picker_scroll + dy).clamp(0.0, max);
     }
 
     pub fn remove(&mut self, row: usize) {
@@ -435,7 +466,7 @@ impl Ctx<'_> {
         let raw = &st.fields[f as usize];
         // the secret shows as dots
         let masked = "•".repeat(raw.chars().count());
-        let text = if f == Field::GoogleSecret {
+        let text = if matches!(f, Field::GoogleSecret | Field::DeepSeek) {
             &masked
         } else {
             raw
@@ -489,7 +520,15 @@ impl Ctx<'_> {
     }
 }
 
-pub fn draw(g: &Gfx, st: &State, s: &Settings, flags: Flags, w: f32, h: f32) -> Vec<Hit> {
+pub fn draw(
+    g: &Gfx,
+    st: &State,
+    s: &Settings,
+    d: &ui::Data,
+    flags: Flags,
+    w: f32,
+    h: f32,
+) -> Vec<Hit> {
     let (dark, accent) = (ui::theme(s.style).dark, ui::accent(s));
     let mut hits = vec![];
     let mut c = Ctx {
@@ -596,7 +635,10 @@ pub fn draw(g: &Gfx, st: &State, s: &Settings, flags: Flags, w: f32, h: f32) -> 
     match st.tab {
         Tab::Appearance => appearance(g, &mut c, s, x, cw),
         Tab::Dock => dock(g, &mut c, s, &flags, x, cw),
-        Tab::Widgets => widgets(g, &mut c, st, s, x, cw),
+        Tab::Widgets => match st.picker {
+            Some(group) => picker(g, &mut c, st, s, d, group, x, cw, h),
+            None => widgets(g, &mut c, st, s, x, cw),
+        },
         Tab::Feeds => feeds(g, &mut c, st, s, &flags, x, cw),
     }
     hits
@@ -746,6 +788,107 @@ fn dock(g: &Gfx, c: &mut Ctx, s: &Settings, flags: &Flags, x0: f32, cw: f32) {
     }
 }
 
+// The widget picker's grid: where it starts and stops, and one card plus the gap below it.
+const PICK_TOP: f32 = 112.0;
+const PICK_BOTTOM: f32 = 20.0;
+const PICK_CARD: f32 = 116.0;
+const PICK_STEP: f32 = PICK_CARD + 12.0;
+
+/// Every widget not on the bar yet, as cards with a preview of the tile in a 3-column grid.
+/// Clicking one adds it to `group`.
+fn picker(
+    g: &Gfx,
+    c: &mut Ctx,
+    st: &State,
+    s: &Settings,
+    d: &ui::Data,
+    group: usize,
+    x0: f32,
+    cw: f32,
+    h: f32,
+) {
+    c.title(g, "Add a widget", x0, 72.0);
+    let to = [
+        "To the left of the bar",
+        "To the middle of the bar",
+        "To the right of the bar",
+    ];
+    g.text(
+        to[group.min(2)],
+        x0 + 130.0,
+        72.0,
+        cw - 230.0,
+        24.0,
+        11.5,
+        500,
+        c.p.sub,
+        Align::Left,
+    );
+    let (bx, bw) = (x0 + cw - 84.0, 84.0);
+    c.hover(g, Act::ClosePicker, bx, 68.0, bw, 30.0, 9.0);
+    g.text(
+        "Cancel",
+        bx,
+        68.0,
+        bw,
+        30.0,
+        12.0,
+        600,
+        c.link,
+        Align::Center,
+    );
+    c.hits.push((bx, 68.0, bw, 30.0, Act::ClosePicker));
+
+    let hidden: Vec<usize> = (0..st.rows.len()).filter(|&i| !st.rows[i].on).collect();
+    let (top, bottom) = (PICK_TOP, h - PICK_BOTTOM);
+    let card_w = (cw - 24.0) / 3.0;
+    g.clip(x0 - 4.0, top - 4.0, cw + 8.0, bottom - top + 4.0);
+    for (n, &i) in hidden.iter().enumerate() {
+        let widget = st.rows[i].widget;
+        let x = x0 + (n % 3) as f32 * (card_w + 12.0);
+        let y = top + (n / 3) as f32 * PICK_STEP - st.picker_scroll;
+        if y + PICK_CARD < top || y > bottom {
+            continue;
+        }
+        let act = Act::AddWidget(i);
+        g.fill_rr(x, y, card_w, PICK_CARD, 14.0, c.p.card);
+        if c.over == Some(act) {
+            g.stroke_rr(x, y, card_w, PICK_CARD, 14.0, c.accent, 2.0);
+        }
+        ui::preview(g, s, d, widget, x + 8.0, y + 8.0, card_w - 16.0, 62.0);
+        g.text(
+            widget.label(),
+            x + 12.0,
+            y + 76.0,
+            card_w - 24.0,
+            18.0,
+            12.0,
+            700,
+            c.p.text,
+            Align::Left,
+        );
+        g.text(
+            widget.blurb(),
+            x + 12.0,
+            y + 94.0,
+            card_w - 24.0,
+            16.0,
+            10.5,
+            400,
+            c.p.sub,
+            Align::Left,
+        );
+        // only the part that shows takes clicks
+        let (hy, hb) = (y.max(top), (y + PICK_CARD).min(bottom));
+        c.hits.push((x, hy, card_w, hb - hy, act));
+    }
+    g.unclip();
+    if hidden.is_empty() {
+        let msg = "Every widget is on the bar already";
+        g.text(msg, x0, top, cw, 40.0, 12.0, 500, c.p.sub, Align::Left);
+    }
+}
+
 fn widgets(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, x0: f32, cw: f32) {
     // left: widgets by group, dragged by their grip
     let w3 = 300.0;
@@ -789,7 +932,7 @@ fn widgets(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, x0: f32, cw: f32) {
             g.fill_rr(x0 - 6.0, y, w3 + 12.0, ROW, 8.0, c.p.card);
             g.stroke_rr(x0 - 6.0, y, w3 + 12.0, ROW, 8.0, c.accent, 1.5);
         }
-        row(g, c, st, i, r, x0, y, w3);
+        row(g, c, st, s, i, r, x0, y, w3);
     }
     if let Some(d) = held {
         g.fill_rr(
@@ -881,7 +1024,7 @@ fn feeds(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, flags: &Flags, x0: f32,
         Align::Left,
     );
 
-    c.title(g, "Google Calendar", x0, 258.0);
+    c.title(g, "Google Calendar and Gmail", x0, 258.0);
     if flags.google {
         let line = if flags.google_account.is_empty() {
             "Signed in. Calendars you tick in Google Calendar show up here.".to_string()
@@ -980,6 +1123,28 @@ fn feeds(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, flags: &Flags, x0: f32,
         g.text(note, x0, 370.0, cw, 18.0, 10.5, 400, c.p.sub, Align::Left);
     }
 
+    c.title(g, "DeepSeek", x0, 414.0);
+    c.field(
+        g,
+        st,
+        Field::DeepSeek,
+        x0,
+        444.0,
+        cw,
+        "API key, for the balance widget",
+    );
+    g.text(
+        "From platform.deepseek.com. It's kept encrypted for your Windows account.",
+        x0,
+        480.0,
+        cw,
+        18.0,
+        10.5,
+        400,
+        c.p.sub,
+        Align::Left,
+    );
+
     // city suggestions, over whatever is below the field and ahead of it in the hits
     if !st.places.is_empty() {
         let (x, y0) = (x0, CITY_Y + 36.0);
@@ -1020,7 +1185,17 @@ fn feeds(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, flags: &Flags, x0: f32,
     }
 }
 
-fn row(g: &Gfx, c: &mut Ctx, st: &State, i: usize, r: &WidgetRow, x: f32, y: f32, w: f32) {
+fn row(
+    g: &Gfx,
+    c: &mut Ctx,
+    st: &State,
+    s: &Settings,
+    i: usize,
+    r: &WidgetRow,
+    x: f32,
+    y: f32,
+    w: f32,
+) {
     if st.drag.is_none() {
         c.hover(g, Act::Drag(i), x + 24.0, y + 1.0, w - 24.0, ROW - 2.0, 8.0);
     }
@@ -1033,11 +1208,39 @@ fn row(g: &Gfx, c: &mut Ctx, st: &State, i: usize, r: &WidgetRow, x: f32, y: f32
     if st.drag.is_none() {
         c.hits.push((x - 2.0, y, 26.0, ROW, Act::Remove(i)));
     }
+    // its look, for tiles that have more than one: a select that opens the list of them
+    let mut label_w = w - 68.0;
+    if r.widget.variants().len() > 1 {
+        let look = s.variant(r.widget).label();
+        let cw = g.measure(look, 11.0, 600) + 34.0;
+        let (cx, cy) = (x + w - 30.0 - cw, y + 4.0);
+        g.fill_rr(cx, cy, cw, ROW - 8.0, 7.0, c.p.card);
+        if st.drag.is_none() {
+            c.hover(g, Act::Variant(i), cx, cy, cw, ROW - 8.0, 7.0);
+            c.hits.push((cx, cy, cw, ROW - 8.0, Act::Variant(i)));
+        }
+        g.text(
+            look,
+            cx + 10.0,
+            cy,
+            cw - 30.0,
+            ROW - 8.0,
+            11.0,
+            600,
+            c.p.text,
+            Align::Left,
+        );
+        // the select's chevron
+        let (vx, vy) = (cx + cw - 14.0, cy + (ROW - 8.0) / 2.0);
+        g.line(vx - 3.5, vy - 1.75, vx, vy + 1.75, c.p.sub, 1.5);
+        g.line(vx, vy + 1.75, vx + 3.5, vy - 1.75, c.p.sub, 1.5);
+        label_w -= cw + 6.0;
+    }
     g.text(
         r.widget.label(),
         x + 30.0,
         y,
-        w - 68.0,
+        label_w,
         ROW,
         12.0,
         500,

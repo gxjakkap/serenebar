@@ -1,12 +1,16 @@
-//! Google Calendar: sign-in the way Google wants desktop apps to do it (the browser, a loopback
-//! redirect and a PKCE challenge), then read-only access to the calendars you have ticked.
+//! Google Calendar and Gmail: sign-in the way Google wants desktop apps to do it (the browser, a
+//! loopback redirect and a PKCE challenge), then read-only access to the calendars you have
+//! ticked, and the inbox's unread count.
 //! The refresh token is encrypted with DPAPI, so only this Windows account can read it.
 use crate::calendar::{Event, Stamp};
 use crate::dates::{days_from_civil, iso_to_unix};
 use crate::http::{pct, pct_decode};
 use serde_json::Value;
 
-pub const GOOGLE_SCOPE: &str = "https://www.googleapis.com/auth/calendar.readonly";
+/// Read-only calendars, and Gmail's labels: the narrowest Gmail scope that has the unread count,
+/// with no access to the mail itself.
+pub const GOOGLE_SCOPE: &str = "https://www.googleapis.com/auth/calendar.readonly \
+                                https://www.googleapis.com/auth/gmail.labels";
 
 /// Google's consent page for a desktop app with a loopback redirect and a PKCE challenge.
 pub fn google_auth_url(client_id: &str, redirect: &str, challenge: &str, state: &str) -> String {
@@ -86,6 +90,26 @@ pub fn api_error(body: &str) -> Option<String> {
     )
 }
 
+/// Unread conversations in the inbox, from Gmail's `labels/INBOX`, the number Gmail shows.
+pub fn parse_unread(body: &str) -> Option<u32> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let n = v["threadsUnread"]
+        .as_u64()
+        .or(v["messagesUnread"].as_u64())?;
+    Some(n as u32)
+}
+
+/// What the Gmail tile says when Gmail answers with an error.
+pub fn gmail_error(body: &str) -> &'static str {
+    if body.contains("SERVICE_DISABLED") || body.contains("accessNotConfigured") {
+        "Turn on the Gmail API"
+    } else if body.contains("SCOPE_INSUFFICIENT") || body.contains("insufficientPermissions") {
+        "Sign in again"
+    } else {
+        "Gmail error"
+    }
+}
+
 /// Events from Google's events.list. Timed events come back as UTC stamps, all-day ones as dates.
 pub fn parse_google_events(body: &str) -> Vec<Event> {
     let Ok(v) = serde_json::from_str::<Value>(body) else {
@@ -138,11 +162,11 @@ mod win {
     use super::*;
     use crate::http::{base64url, curl_any, curl_form};
     use crate::settings::Settings;
+    use crate::system::dpapi;
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
-    use windows::Win32::Foundation::*;
     use windows::Win32::Security::Cryptography::*;
     use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
 
@@ -172,42 +196,6 @@ mod win {
 
     pub fn connected() -> bool {
         token_path().exists()
-    }
-
-    fn dpapi(data: &[u8], protect: bool) -> Option<Vec<u8>> {
-        let input = CRYPT_INTEGER_BLOB {
-            cbData: data.len() as u32,
-            pbData: data.as_ptr() as *mut u8,
-        };
-        let mut out = CRYPT_INTEGER_BLOB::default();
-        unsafe {
-            if protect {
-                CryptProtectData(
-                    &input,
-                    None,
-                    None,
-                    None,
-                    None,
-                    CRYPTPROTECT_UI_FORBIDDEN,
-                    &mut out,
-                )
-                .ok()?;
-            } else {
-                CryptUnprotectData(
-                    &input,
-                    None,
-                    None,
-                    None,
-                    None,
-                    CRYPTPROTECT_UI_FORBIDDEN,
-                    &mut out,
-                )
-                .ok()?;
-            }
-            let bytes = std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec();
-            let _ = LocalFree(HLOCAL(out.pbData as _));
-            Some(bytes)
-        }
     }
 
     fn save_refresh(token: &str) -> bool {
@@ -353,6 +341,18 @@ mod win {
         Some(t)
     }
 
+    /// The inbox's unread count, or what to show instead: empty when not signed in or offline.
+    pub fn gmail_unread(id: &str, secret: &str) -> Result<u32, &'static str> {
+        if id.is_empty() || !connected() {
+            return Err("");
+        }
+        let token = access_token(id, secret).ok_or("")?;
+        let auth = format!("Authorization: Bearer {token}\r\n");
+        let url = "https://gmail.googleapis.com/gmail/v1/users/me/labels/INBOX";
+        let body = curl_any(url, Some(&auth)).ok_or("")?;
+        parse_unread(&body).ok_or_else(|| gmail_error(&body))
+    }
+
     /// Events between days `from` and `to` from every calendar ticked in Google Calendar.
     /// None when not signed in or Google can't be reached.
     pub fn events(id: &str, secret: &str, from: i64, to: i64) -> Option<Vec<Event>> {
@@ -464,5 +464,17 @@ mod tests {
             Some("Google Calendar: x")
         );
         assert_eq!(api_error(r#"{"items":[]}"#), None);
+    }
+
+    #[test]
+    fn gmail_unread_count() {
+        let inbox = r#"{"id":"INBOX","messagesTotal":900,"messagesUnread":14,"threadsUnread":11}"#;
+        assert_eq!(parse_unread(inbox), Some(11));
+        assert_eq!(parse_unread(r#"{"messagesUnread":3}"#), Some(3));
+        let scope =
+            r#"{"error":{"code":403,"details":[{"reason":"ACCESS_TOKEN_SCOPE_INSUFFICIENT"}]}}"#;
+        assert_eq!(parse_unread(scope), None);
+        assert_eq!(gmail_error(scope), "Sign in again");
+        assert!(GOOGLE_SCOPE.ends_with(" https://www.googleapis.com/auth/gmail.labels"));
     }
 }
