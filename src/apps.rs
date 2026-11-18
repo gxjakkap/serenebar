@@ -91,18 +91,17 @@ pub fn parse_badge(title: &str) -> u32 {
         .unwrap_or(0)
 }
 
-/// True when everything drawn in a square 32-bit BGRA image of width `w` fits in a quarter
-/// of it. The shell returns this when an exe has no 256 px icon: a 32 or 48 px icon centred
-/// on an empty 256 px canvas.
+/// True when under an eighth of a square 32-bit BGRA image is drawn on. The shell returns this
+/// when an exe has no 256 px icon: a 32 or 48 px icon centred on a 256 px canvas, sometimes
+/// inside a thin square frame, which a bounding box would mistake for a full-size icon.
 pub fn mostly_padding(bgra: &[u8], w: usize) -> bool {
-    let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0, 0);
-    for (i, px) in bgra.as_chunks::<4>().0.iter().enumerate() {
-        if px[3] != 0 {
-            let (x, y) = (i % w, i / w);
-            (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
-        }
-    }
-    x0 == usize::MAX || (x1 - x0 + 1).max(y1 - y0 + 1) * 4 <= w
+    let drawn = bgra
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|px| px[3] != 0)
+        .count();
+    drawn * 8 < w * w
 }
 
 #[cfg(windows)]
@@ -570,5 +569,12 @@ mod tests {
         assert!(mostly_padding(&canvas(48), 256));
         assert!(!mostly_padding(&canvas(200), 256));
         assert!(mostly_padding(&vec![0u8; 256 * 256 * 4], 256));
+        let mut framed = canvas(48);
+        for t in 0..256 {
+            for (x, y) in [(t, 0), (t, 255), (0, t), (255, t)] {
+                framed[(y * 256 + x) * 4 + 3] = 255;
+            }
+        }
+        assert!(mostly_padding(&framed, 256));
     }
 }
