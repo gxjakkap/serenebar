@@ -18,6 +18,7 @@ mod glass;
 mod google;
 mod http;
 mod limits;
+mod net;
 #[cfg(windows)]
 mod panel;
 #[cfg(windows)]

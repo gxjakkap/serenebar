@@ -17,6 +17,7 @@ src/dock.rs      window/bar geometry and the magnification curve
 src/glass.rs     glass parameters per style and the displacement map
 src/system.rs    CPU, memory, battery, keyboard layout, keys, clock, startup key
 src/taskbar.rs   hiding Explorer's taskbar and aligning Start
+src/net.rs       network speed from the adapters' byte counters
 src/controls.rs  media session, Wi-Fi/Bluetooth radios, VPN, volume
 src/feeds.rs     background fetching of weather, calendar, limits and releases
 src/update.rs    update check: the latest GitHub release against this build's version

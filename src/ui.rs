@@ -206,7 +206,8 @@ pub struct Data {
     pub update: Option<crate::update::Release>, // a newer release than this build
     pub update_note: &'static str,              // how a check from Settings went
     pub volume: Option<crate::controls::Volume>,
-    pub mic: Option<bool>, // muted; None without a microphone
+    pub mic: Option<bool>,       // muted; None without a microphone
+    pub net: Option<(f64, f64)>, // bytes per second down and up
     pub wifi: Option<bool>,
     pub vpn: Option<bool>,
     pub lang: Option<(String, String)>,
@@ -351,6 +352,7 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
         Widget::Tray | Widget::Desktop => 24.0 * k,
         Widget::System => 96.0 * k,
         Widget::Mic => 68.0 * k,
+        Widget::Network => 92.0 * k,
         Widget::Battery if d.battery.is_some() => 56.0 * k,
         Widget::Apps | Widget::Claude | Widget::Codex | Widget::Lang | Widget::Battery => {
             return None
@@ -582,6 +584,7 @@ pub fn draw_tiles(g: &Gfx, v: &View, d: &Data, full_w: Option<f32>) -> Vec<Hit<A
                 Widget::System => system(g, v, d, x, y, w, h, &mut hits),
                 Widget::Battery => battery(g, v, d, x, y, w, h),
                 Widget::Mic => mic(g, v, d, x, y, w, h, &mut hits),
+                Widget::Network => network(g, v, d, x, y, w, h, &mut hits),
             }
         }
     }
@@ -1720,4 +1723,49 @@ fn mic(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut V
         }
         hits.push((cx - br, cy - br, br * 2.0, br * 2.0, act));
     }
+}
+
+/// Download and upload speed, one per line. Opens Task Manager, which has the graphs.
+fn network(
+    g: &Gfx,
+    v: &View,
+    d: &Data,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hits: &mut Vec<Hit<Action>>,
+) {
+    let k = v.m.k;
+    tile(g, v, x, y, w, h, v.hover == Some(Action::TaskManager));
+    let (down, up) = d.net.unwrap_or((0.0, 0.0));
+    let f = font(k, 11.0);
+    for (i, (arrow, bytes)) in [("↓", down), ("↑", up)].into_iter().enumerate() {
+        let ry = y + 5.0 * k + i as f32 * 17.0 * k;
+        g.text(
+            arrow,
+            x + 8.0 * k,
+            ry,
+            12.0 * k,
+            16.0 * k,
+            f,
+            700,
+            v.accent,
+            Align::Left,
+        );
+        let speed = crate::net::fmt_rate(bytes);
+        let (tx, tw) = (x + 20.0 * k, w - 28.0 * k);
+        g.text(
+            &speed,
+            tx,
+            ry,
+            tw,
+            16.0 * k,
+            f,
+            600,
+            v.th.text,
+            Align::Right,
+        );
+    }
+    hits.push((x, y, w, h, Action::TaskManager));
 }

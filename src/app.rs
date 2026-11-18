@@ -625,6 +625,7 @@ struct App {
     app_order: Vec<String>,   // first-seen order of unpinned apps
     start_left: Option<bool>, // Start menu alignment last applied
     cpu_prev: (u64, u64),
+    net_prev: Option<(Instant, u64, u64)>, // when the network counters were last read
     art_id: u64,
     tx: Sender<Cmd>,
     feeds: Sender<feeds::Msg>,
@@ -776,6 +777,7 @@ impl App {
         self.d.cpu = system::cpu(&mut self.cpu_prev);
         self.d.mem = system::mem();
         self.d.battery = system::battery();
+        self.read_network();
         if self.bars.iter().all(|b| b.app_drag.is_none()) {
             self.d.apps = apps::apps(
                 &self.pinned,
@@ -819,6 +821,23 @@ impl App {
             b.slide.resize(self.d.apps.len(), 0.0);
             b.mag.resize(n, 1.0);
             b.mag_target.resize(n, 1.0);
+        }
+    }
+
+    /// Speeds from the counters' change since the last reading, at most twice a second.
+    fn read_network(&mut self) {
+        let Some((rx, tx)) = crate::net::counters() else {
+            return;
+        };
+        let now = Instant::now();
+        match self.net_prev {
+            Some((t, _, _)) if now.duration_since(t).as_secs_f64() < 0.5 => {}
+            Some((t, prx, ptx)) => {
+                let dt = now.duration_since(t).as_secs_f64();
+                self.d.net = Some((crate::net::rate(prx, rx, dt), crate::net::rate(ptx, tx, dt)));
+                self.net_prev = Some((now, rx, tx));
+            }
+            None => self.net_prev = Some((now, rx, tx)),
         }
     }
 
@@ -1918,6 +1937,7 @@ pub fn main() -> Result<()> {
             app_order: vec![],
             start_left: None,
             cpu_prev: (0, 0),
+            net_prev: None,
             art_id: 0,
             tx: controls::spawn_winrt(hwnd),
             feeds: feeds::spawn_feeds(hwnd),

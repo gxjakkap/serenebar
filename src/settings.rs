@@ -170,11 +170,12 @@ pub enum Widget {
     Clock,
     DateClock,
     Mic,
+    Network,
 }
 
 impl Widget {
     /// In the order the settings window lists them.
-    pub const ALL: [Widget; 15] = [
+    pub const ALL: [Widget; 16] = [
         Widget::Weather,
         Widget::Media,
         Widget::System,
@@ -190,6 +191,7 @@ impl Widget {
         Widget::Clock,
         Widget::DateClock,
         Widget::Mic,
+        Widget::Network,
     ];
 
     /// Its name in the settings file.
@@ -210,6 +212,7 @@ impl Widget {
             Widget::Clock => "clock",
             Widget::DateClock => "dateclock",
             Widget::Mic => "mic",
+            Widget::Network => "network",
         }
     }
 
@@ -230,13 +233,14 @@ impl Widget {
             Widget::Clock => "Clock",
             Widget::DateClock => "Tear-off clock",
             Widget::Mic => "Mute and deafen",
+            Widget::Network => "Network speed",
         }
     }
 
     /// The group a tile joins when it is switched on: 0 left, 1 centre, 2 right (of `GROUPS`).
     pub fn home_group(self) -> usize {
         match self {
-            Widget::Weather | Widget::Media | Widget::System => 0,
+            Widget::Weather | Widget::Media | Widget::System | Widget::Network => 0,
             Widget::Start | Widget::Apps => 1,
             _ => 2,
         }
