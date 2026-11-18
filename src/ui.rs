@@ -1090,25 +1090,53 @@ fn brand(g: &Gfx, i: usize, bg: C, inset: f32, x: f32, y: f32, s: f32) {
     g.bitmap(&b, x + (s - w) / 2.0, y + (s - h) / 2.0, w, h);
 }
 
+/// Gemini's four-pointed star in an `s` square at (x, y): Google's path, whose sides are arcs
+/// of radius 8.522 on a 16 square, centred just outside each corner, in its purple-to-cyan.
+fn gemini_star(g: &Gfx, x: f32, y: f32, s: f32) {
+    let (r, out) = (8.522_f32, 0.52_f32); // the arcs, and how far past the corner they're centred
+    let k = s / 16.0;
+    // each side runs from one tip to the next, bowed in towards the middle
+    let tips = [(16.0, 8.0), (8.0, 16.0), (0.0, 8.0), (8.0, 0.0)];
+    let corners = [
+        (16.0 + out, 16.0 + out),
+        (-out, 16.0 + out),
+        (-out, -out),
+        (16.0 + out, -out),
+    ];
+    let mut pts = vec![];
+    for i in 0..4 {
+        let ((ax, ay), (bx, by), (cx, cy)) = (tips[i], tips[(i + 1) % 4], corners[i]);
+        let (a0, a1) = ((ay - cy).atan2(ax - cx), (by - cy).atan2(bx - cx));
+        // the short way round from one tip to the next
+        let mut da = a1 - a0;
+        if da > PI {
+            da -= 2.0 * PI;
+        } else if da < -PI {
+            da += 2.0 * PI;
+        }
+        for j in 0..12 {
+            let a = a0 + da * j as f32 / 12.0;
+            pts.push((x + (cx + r * a.cos()) * k, y + (cy + r * a.sin()) * k));
+        }
+    }
+    let stops = [
+        (0.07, rgba(0x9168C0, 1.0)),
+        (0.34, rgba(0x5684D1, 1.0)),
+        (0.67, rgba(0x1BA1E3, 1.0)),
+    ];
+    g.poly_grad(&pts, &stops, (x, y + s), (x + s, y));
+}
+
 /// Claude on its orange, OpenAI's knot for Codex on black, Cursor's cube on white, and for
-/// Antigravity, Gemini's four-pointed star drawn on white.
+/// Antigravity, Gemini's star on white.
 pub fn ai_logo(g: &Gfx, which: Panel, x: f32, y: f32, s: f32) {
     match which {
         Panel::Claude => brand(g, 0, rgba(0xD97757, 1.0), 0.2, x, y, s),
         Panel::Codex => brand(g, 1, rgba(0x0D0D0D, 1.0), 0.18, x, y, s),
         Panel::Cursor => brand(g, 2, white(1.0), 0.2, x, y, s),
         _ => {
-            let (cx, cy) = (x + s / 2.0, y + s / 2.0);
             g.fill_rr(x, y, s, s, s * 0.24, white(1.0));
-            let (r, n) = (s * 0.34, s * 0.06); // tip and waist
-            let star: Vec<(f32, f32)> = (0..8)
-                .map(|i| {
-                    let a = i as f32 * PI / 4.0;
-                    let d = if i % 2 == 0 { r } else { n };
-                    (cx + a.sin() * d, cy - a.cos() * d)
-                })
-                .collect();
-            g.poly(&star, rgba(0x4C7BF3, 1.0));
+            gemini_star(g, x + s * 0.18, y + s * 0.18, s * 0.64);
         }
     }
 }

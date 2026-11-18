@@ -761,6 +761,64 @@ impl Gfx {
         m
     }
 
+    /// A polygon filled with a gradient running from `from` to `to`.
+    pub fn poly_grad(
+        &self,
+        pts: &[(f32, f32)],
+        stops: &[(f32, C)],
+        from: (f32, f32),
+        to: (f32, f32),
+    ) {
+        let s: Vec<D2D1_GRADIENT_STOP> = stops
+            .iter()
+            .map(|&(p, c)| D2D1_GRADIENT_STOP {
+                position: p,
+                color: c,
+            })
+            .collect();
+        unsafe {
+            let rt: &ID2D1RenderTarget = &self.dc;
+            let (Ok(coll), Some(path)) = (
+                rt.CreateGradientStopCollection(&s, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP),
+                self.polygon(pts),
+            ) else {
+                return;
+            };
+            let props = D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
+                startPoint: D2D_POINT_2F {
+                    x: from.0,
+                    y: from.1,
+                },
+                endPoint: D2D_POINT_2F { x: to.0, y: to.1 },
+            };
+            if let Ok(b) = self.dc.CreateLinearGradientBrush(&props, None, &coll) {
+                self.dc.FillGeometry(&path, &b, None);
+            }
+        }
+    }
+
+    fn polygon(&self, pts: &[(f32, f32)]) -> Option<ID2D1PathGeometry1> {
+        unsafe {
+            let path = self.factory.CreatePathGeometry().ok()?;
+            let sink = path.Open().ok()?;
+            sink.BeginFigure(
+                D2D_POINT_2F {
+                    x: pts[0].0,
+                    y: pts[0].1,
+                },
+                D2D1_FIGURE_BEGIN_FILLED,
+            );
+            let rest: Vec<D2D_POINT_2F> = pts[1..]
+                .iter()
+                .map(|&(x, y)| D2D_POINT_2F { x, y })
+                .collect();
+            sink.AddLines(&rest);
+            sink.EndFigure(D2D1_FIGURE_END_CLOSED);
+            sink.Close().ok()?;
+            Some(path)
+        }
+    }
+
     pub fn poly(&self, pts: &[(f32, f32)], c: C) {
         unsafe {
             let Ok(path) = self.factory.CreatePathGeometry() else {
