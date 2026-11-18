@@ -79,7 +79,7 @@ fn ai_text(kind: Panel) -> (&'static str, &'static str, &'static str) {
         Panel::Cursor => (
             "Cursor",
             "Sign in to Cursor on this PC.",
-            "From Cursor's sign-in, this billing month",
+            "From Cursor's sign-in, this usage period",
         ),
         Panel::Antigravity => (
             "Antigravity",

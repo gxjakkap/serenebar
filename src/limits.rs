@@ -12,8 +12,8 @@ pub enum Window {
     /// Antigravity's pool for the models that aren't Gemini.
     OtherSession,
     OtherWeekly,
-    /// Cursor: the plan's monthly allowance, and its two halves.
-    Monthly,
+    /// Cursor: the plan's included usage this period, and its two halves.
+    Included,
     Auto,
     Api,
 }
@@ -27,7 +27,7 @@ impl Window {
             "Sonnet",
             "Claude and GPT, session",
             "Claude and GPT, weekly",
-            "Monthly",
+            "Included",
             "Auto",
             "API",
         ][self as usize]
@@ -365,18 +365,34 @@ pub fn cursor_token(files: &[&[u8]]) -> Option<(String, String)> {
     best.map(|(_, u, t)| (u, t))
 }
 
-/// Cursor's `GET /api/usage-summary`: the plan's use this billing month, overall and split
-/// into Auto and the named (API) models.
+/// Cursor's `DashboardService/GetCurrentPeriodUsage`: what its dashboard shows as "included
+/// usage", for the current period. The period's end comes in milliseconds, as a string.
+pub fn parse_cursor_period(body: &str) -> Option<Vec<Limit>> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let end = &v["billingCycleEnd"];
+    let ms = end
+        .as_str()
+        .and_then(|s| s.parse::<i64>().ok())
+        .or(end.as_i64());
+    cursor_plan(&v["planUsage"], ms.map(|ms| ms / 1000))
+}
+
+/// Cursor's older `GET /api/usage-summary`. On the current plans its percentages can stay at 0,
+/// so it's only the fallback.
 pub fn parse_cursor(body: &str) -> Option<Vec<Limit>> {
     let v: Value = serde_json::from_str(body).ok()?;
-    let plan = &v["individualUsage"]["plan"];
     let resets = v["billingCycleEnd"].as_str().and_then(iso_to_unix);
+    cursor_plan(&v["individualUsage"]["plan"], resets)
+}
+
+/// The plan's use overall, then split into Auto and the named (API) models.
+fn cursor_plan(plan: &Value, resets: Option<i64>) -> Option<Vec<Limit>> {
     let total = plan["totalPercentUsed"].as_f64().or_else(|| {
         let (used, limit) = (plan["used"].as_f64()?, plan["limit"].as_f64()?);
         (limit > 0.0).then(|| used / limit * 100.0)
     })?;
     let mut out = vec![Limit {
-        window: Window::Monthly,
+        window: Window::Included,
         pct: total as f32,
         resets,
     }];
@@ -404,7 +420,7 @@ mod win {
     use crate::http::{curl, curl_form, curl_json, curl_post, pct};
     use crate::limits::{
         apply_claude_refresh, claude_refresh_body, code_assist_project, oauth_clients,
-        parse_agy_token, parse_antigravity, Limit, CLAUDE_TOKEN_URL,
+        parse_agy_token, parse_antigravity, parse_cursor_period, Limit, CLAUDE_TOKEN_URL,
     };
     use serde_json::Value;
     use std::path::{Path, PathBuf};
@@ -710,11 +726,14 @@ mod win {
         let main = std::fs::read(&db).ok()?;
         let wal = std::fs::read(db.with_extension("vscdb-wal")).unwrap_or_default();
         let (user, token) = crate::limits::cursor_token(&[&main, &wal])?;
-        let headers = format!("Cookie: WorkosCursorSessionToken={user}%3A%3A{token}\r\n");
-        crate::limits::parse_cursor(&curl(
-            "https://cursor.com/api/usage-summary",
-            Some(&headers),
-        )?)
+        let bearer = format!("Authorization: Bearer {token}\r\nConnect-Protocol-Version: 1\r\n");
+        let url = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage";
+        if let Some(l) = curl_post(url, &bearer, "{}").and_then(|b| parse_cursor_period(&b)) {
+            return Some(l);
+        }
+        let cookie = format!("Cookie: WorkosCursorSessionToken={user}%3A%3A{token}\r\n");
+        let url = "https://cursor.com/api/usage-summary";
+        crate::limits::parse_cursor(&curl(url, Some(&cookie))?)
     }
 
     /// The balance on a DeepSeek account. The key only goes to DeepSeek.
@@ -922,7 +941,7 @@ mod tests {
         assert_eq!(
             l.iter().map(|l| (l.window, l.pct)).collect::<Vec<_>>(),
             [
-                (Window::Monthly, 75.0),
+                (Window::Included, 75.0),
                 (Window::Auto, 20.0),
                 (Window::Api, 55.0)
             ]
@@ -931,5 +950,12 @@ mod tests {
         let old_shape = r#"{"individualUsage":{"plan":{"used":500,"limit":2000}}}"#;
         assert_eq!(parse_cursor(old_shape).unwrap()[0].pct, 25.0);
         assert_eq!(parse_cursor(r#"{"individualUsage":{}}"#), None);
+        // what the dashboard reads: 4% of the included usage, ending 28 Nov 2026 00:00 UTC
+        let period = r#"{"billingCycleStart":"1793232000000","billingCycleEnd":"1795824000000",
+            "planUsage":{"enabled":true,"totalPercentUsed":4.2,"autoPercentUsed":4.2,"apiPercentUsed":0}}"#;
+        let l = parse_cursor_period(period).unwrap();
+        assert_eq!((l[0].window, l[0].pct), (Window::Included, 4.2));
+        assert_eq!(l[0].resets, iso_to_unix("2026-11-28T00:00:00Z"));
+        assert_eq!(parse_cursor_period(r#"{"planUsage":{}}"#), None);
     }
 }
