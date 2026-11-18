@@ -76,6 +76,11 @@ fn ai_text(kind: Panel) -> (&'static str, &'static str, &'static str) {
             "Sign in to Claude Code on this PC.",
             "From Claude Code's sign-in on this PC",
         ),
+        Panel::Cursor => (
+            "Cursor",
+            "Sign in to Cursor on this PC.",
+            "From Cursor's sign-in, this billing month",
+        ),
         Panel::Antigravity => (
             "Antigravity",
             "Sign in to the Antigravity CLI (agy) on this PC.",
@@ -131,7 +136,7 @@ pub fn size(kind: Panel, d: &Data) -> (f32, f32) {
         ),
         Panel::Calendar => (660.0, 470.0),
         Panel::Weather => (320.0, 404.0),
-        Panel::Claude | Panel::Codex | Panel::Antigravity => (
+        Panel::Claude | Panel::Codex | Panel::Antigravity | Panel::Cursor => (
             300.0,
             AI_TOP + limits(kind, d).len().max(1) as f32 * AI_ROW + AI_SOURCE,
         ),
@@ -162,7 +167,9 @@ pub fn draw(g: &Gfx, st: &State, d: &Data, s: &Settings, w: f32, h: f32) -> Vec<
     match st.kind {
         Panel::Calendar => calendar(g, &p, st, d, accent, link, s.clock24, w, h, &mut hits),
         Panel::Weather => weather(g, &p, d, w),
-        Panel::Claude | Panel::Codex | Panel::Antigravity => ai(g, &p, st.kind, d, w, h),
+        Panel::Claude | Panel::Codex | Panel::Antigravity | Panel::Cursor => {
+            ai(g, &p, st.kind, d, w, h)
+        }
         Panel::Controls => controls(g, &p, st, d, accent, link, w, h, &mut hits),
         Panel::About => about(g, &p, st, d, accent, link, w, h, &mut hits),
         Panel::Tray => tray(g, &p, st, d, w, h, &mut hits),

@@ -1,4 +1,4 @@
-//! AI plan limits: Claude, Codex and Antigravity, and the DeepSeek balance.
+//! AI plan limits: Claude, Codex, Antigravity and Cursor, and the DeepSeek balance.
 use crate::dates::iso_to_unix;
 use serde_json::Value;
 
@@ -12,6 +12,10 @@ pub enum Window {
     /// Antigravity's pool for the models that aren't Gemini.
     OtherSession,
     OtherWeekly,
+    /// Cursor: the plan's monthly allowance, and its two halves.
+    Monthly,
+    Auto,
+    Api,
 }
 
 impl Window {
@@ -23,6 +27,9 @@ impl Window {
             "Sonnet",
             "Claude and GPT, session",
             "Claude and GPT, weekly",
+            "Monthly",
+            "Auto",
+            "API",
         ][self as usize]
     }
 
@@ -310,6 +317,82 @@ pub fn parse_deepseek(body: &str) -> Option<Vec<Balance>> {
         })
         .collect();
     (!out.is_empty()).then_some(out)
+}
+
+/// The claims in a JWT's middle part.
+pub fn jwt_claims(jwt: &str) -> Option<Value> {
+    let part = jwt.split('.').nth(1)?;
+    let b64: String = part
+        .chars()
+        .map(|c| match c {
+            '-' => '+',
+            '_' => '/',
+            c => c,
+        })
+        .collect();
+    serde_json::from_slice(&crate::http::base64_decode(&b64)?).ok()
+}
+
+/// Cursor's session token from the bytes of its state database (and its write-ahead log): the
+/// value stored after the `cursorAuth/accessToken` key. Old copies linger in freed pages, so
+/// the one that expires last wins. Returns (user id, token), the two halves of the cookie.
+/// ponytail: a byte scan instead of a SQLite reader; a token too big for one page is missed.
+pub fn cursor_token(files: &[&[u8]]) -> Option<(String, String)> {
+    const KEY: &[u8] = b"cursorAuth/accessToken";
+    let jwt_char = |c: &u8| c.is_ascii_alphanumeric() || b"-_.".contains(c);
+    let mut best: Option<(i64, String, String)> = None;
+    for bin in files {
+        for at in (0..bin.len().saturating_sub(KEY.len())).filter(|&i| bin[i..].starts_with(KEY)) {
+            let rest = &bin[at + KEY.len()..];
+            if !rest.starts_with(b"eyJ") {
+                continue; // the key's index entry, not its row
+            }
+            let n = rest.iter().take_while(|c| jwt_char(c)).count();
+            let jwt = String::from_utf8_lossy(&rest[..n]).into_owned();
+            let Some(claims) = jwt_claims(&jwt) else {
+                continue;
+            };
+            let exp = claims["exp"].as_i64().unwrap_or(0);
+            // "auth0|user_01…": the cookie wants only the part after the bar
+            let Some(user) = claims["sub"].as_str().and_then(|s| s.rsplit('|').next()) else {
+                continue;
+            };
+            if best.as_ref().is_none_or(|b| exp > b.0) {
+                best = Some((exp, user.to_string(), jwt));
+            }
+        }
+    }
+    best.map(|(_, u, t)| (u, t))
+}
+
+/// Cursor's `GET /api/usage-summary`: the plan's use this billing month, overall and split
+/// into Auto and the named (API) models.
+pub fn parse_cursor(body: &str) -> Option<Vec<Limit>> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let plan = &v["individualUsage"]["plan"];
+    let resets = v["billingCycleEnd"].as_str().and_then(iso_to_unix);
+    let total = plan["totalPercentUsed"].as_f64().or_else(|| {
+        let (used, limit) = (plan["used"].as_f64()?, plan["limit"].as_f64()?);
+        (limit > 0.0).then(|| used / limit * 100.0)
+    })?;
+    let mut out = vec![Limit {
+        window: Window::Monthly,
+        pct: total as f32,
+        resets,
+    }];
+    for (k, window) in [
+        ("autoPercentUsed", Window::Auto),
+        ("apiPercentUsed", Window::Api),
+    ] {
+        if let Some(p) = plan[k].as_f64() {
+            out.push(Limit {
+                window,
+                pct: p as f32,
+                resets,
+            });
+        }
+    }
+    Some(out)
 }
 
 #[cfg(windows)]
@@ -620,6 +703,20 @@ mod win {
         parse_antigravity(&curl_post(url, &headers, &body)?)
     }
 
+    /// Cursor's plan use, with the session Cursor keeps on this PC. The token only goes to Cursor.
+    pub fn cursor_limits() -> Option<Vec<Limit>> {
+        let db = PathBuf::from(std::env::var_os("APPDATA")?)
+            .join(r"Cursor\User\globalStorage\state.vscdb");
+        let main = std::fs::read(&db).ok()?;
+        let wal = std::fs::read(db.with_extension("vscdb-wal")).unwrap_or_default();
+        let (user, token) = crate::limits::cursor_token(&[&main, &wal])?;
+        let headers = format!("Cookie: WorkosCursorSessionToken={user}%3A%3A{token}\r\n");
+        crate::limits::parse_cursor(&curl(
+            "https://cursor.com/api/usage-summary",
+            Some(&headers),
+        )?)
+    }
+
     /// The balance on a DeepSeek account. The key only goes to DeepSeek.
     pub fn deepseek_balance(key: &str) -> Option<Vec<crate::limits::Balance>> {
         let headers = format!("Authorization: Bearer {key}\r\nAccept: application/json\r\n");
@@ -800,5 +897,39 @@ mod tests {
         };
         assert_eq!(usd.text(), "$5.20");
         assert_eq!(parse_deepseek(r#"{"balance_infos":[]}"#), None);
+    }
+
+    #[test]
+    fn cursor_session_and_usage() {
+        let jwt = |sub: &str, exp: i64| {
+            let claims =
+                crate::http::base64url(format!(r#"{{"sub":"{sub}","exp":{exp}}}"#).as_bytes());
+            format!("eyJhbGciOiJIUzI1NiJ9.{claims}.c2ln")
+        };
+        let (old, new) = (jwt("auth0|user_old", 100), jwt("auth0|user_01ABC", 200));
+        let mut db = b"\x05cursorAuth/accessToken\x00\x00".to_vec(); // the index entry
+        db.extend(format!("\x07cursorAuth/accessToken{old}\x00").bytes());
+        let wal = format!("..cursorAuth/accessToken{new}\x01");
+        assert_eq!(
+            cursor_token(&[&db, wal.as_bytes()]),
+            Some(("user_01ABC".to_string(), new))
+        );
+        assert_eq!(cursor_token(&[b"nothing here"]), None);
+
+        let b = r#"{"billingCycleStart":"2026-11-02T14:11:55.000Z","billingCycleEnd":"2026-12-02T14:11:55.000Z",
+            "individualUsage":{"plan":{"enabled":true,"used":1500,"limit":2000,"autoPercentUsed":20,"apiPercentUsed":55,"totalPercentUsed":75}}}"#;
+        let l = parse_cursor(b).unwrap();
+        assert_eq!(
+            l.iter().map(|l| (l.window, l.pct)).collect::<Vec<_>>(),
+            [
+                (Window::Monthly, 75.0),
+                (Window::Auto, 20.0),
+                (Window::Api, 55.0)
+            ]
+        );
+        assert_eq!(l[0].resets, iso_to_unix("2026-12-02T14:11:55Z"));
+        let old_shape = r#"{"individualUsage":{"plan":{"used":500,"limit":2000}}}"#;
+        assert_eq!(parse_cursor(old_shape).unwrap()[0].pct, 25.0);
+        assert_eq!(parse_cursor(r#"{"individualUsage":{}}"#), None);
     }
 }

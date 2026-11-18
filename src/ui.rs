@@ -166,6 +166,7 @@ pub enum Panel {
     Claude,
     Codex,
     Antigravity,
+    Cursor,
     Controls,
     About,
     Tray,
@@ -216,6 +217,7 @@ pub struct Data {
     pub codex: Option<Vec<Limit>>,
     pub antigravity: Option<Vec<Limit>>,
     pub deepseek: Option<Vec<crate::limits::Balance>>,
+    pub cursor: Option<Vec<Limit>>,
     pub update: Option<crate::update::Release>, // a newer release than this build
     pub update_note: &'static str,              // how a check from Settings went
     pub volume: Option<crate::controls::Volume>,
@@ -356,7 +358,9 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
         Widget::Weather => (WEATHER_PAD + d.weather_w).max(150.0) * k,
         Widget::Clock => 100.0 * k,
         Widget::DateClock => 56.0 * k,
-        Widget::Claude | Widget::Codex | Widget::Antigravity if d.limits(ai_panel(w)).is_some() => {
+        Widget::Claude | Widget::Codex | Widget::Antigravity | Widget::Cursor
+            if d.limits(ai_panel(w)).is_some() =>
+        {
             196.0 * k
         }
         Widget::Controls => {
@@ -378,6 +382,7 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
         | Widget::Claude
         | Widget::Codex
         | Widget::Antigravity
+        | Widget::Cursor
         | Widget::Lang
         | Widget::Battery => return None,
     })
@@ -576,7 +581,7 @@ pub fn draw_tiles(g: &Gfx, v: &View, d: &Data, full_w: Option<f32>) -> Vec<Hit<A
                 Widget::Weather => weather(g, v, d, x, y, w, h, &mut hits),
                 Widget::Clock => clock(g, v, d, x, y, w, h, &mut hits),
                 Widget::DateClock => dateclock(g, v, d, x, y, w, h, &mut hits),
-                Widget::Claude | Widget::Codex | Widget::Antigravity => {
+                Widget::Claude | Widget::Codex | Widget::Antigravity | Widget::Cursor => {
                     ai(g, v, d, ai_panel(widget), x, y, w, h, &mut hits)
                 }
                 Widget::Controls => controls(g, v, d, x, y, w, h, &mut hits),
@@ -983,15 +988,30 @@ fn ai_panel(w: Widget) -> Panel {
     match w {
         Widget::Codex => Panel::Codex,
         Widget::Antigravity => Panel::Antigravity,
+        Widget::Cursor => Panel::Cursor,
         _ => Panel::Claude,
     }
 }
 
 /// Claude: an orange square with a starburst. Codex: a white square with a hexagon.
-/// Antigravity: a white square with Gemini's four-pointed star.
+/// Antigravity: a white square with Gemini's four-pointed star. Cursor: a cube on black.
 pub fn ai_logo(g: &Gfx, which: Panel, x: f32, y: f32, s: f32) {
     let (cx, cy) = (x + s / 2.0, y + s / 2.0);
-    if which == Panel::Antigravity {
+    if which == Panel::Cursor {
+        g.fill_rr(x, y, s, s, s * 0.24, rgba(0x141414, 1.0));
+        let p = |i: usize| {
+            let a = i as f32 * PI / 3.0;
+            (cx + a.sin() * s * 0.28, cy - a.cos() * s * 0.28)
+        };
+        for i in 0..6 {
+            let ((x0, y0), (x1, y1)) = (p(i), p(i + 1));
+            g.line(x0, y0, x1, y1, white(1.0), s * 0.06);
+        }
+        for i in [0, 2, 4] {
+            let (x1, y1) = p(i);
+            g.line(cx, cy, x1, y1, white(0.7), s * 0.05);
+        }
+    } else if which == Panel::Antigravity {
         g.fill_rr(x, y, s, s, s * 0.24, white(1.0));
         let (r, n) = (s * 0.34, s * 0.06); // tip and waist
         let star: Vec<(f32, f32)> = (0..8)
@@ -1120,6 +1140,7 @@ impl Data {
             Panel::Claude => self.claude.as_deref(),
             Panel::Codex => self.codex.as_deref(),
             Panel::Antigravity => self.antigravity.as_deref(),
+            Panel::Cursor => self.cursor.as_deref(),
             _ => None,
         }
     }

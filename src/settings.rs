@@ -175,11 +175,12 @@ pub enum Widget {
     Progress,
     Antigravity,
     DeepSeek,
+    Cursor,
 }
 
 impl Widget {
     /// In the order the settings window lists them.
-    pub const ALL: [Widget; 20] = [
+    pub const ALL: [Widget; 21] = [
         Widget::Weather,
         Widget::Media,
         Widget::System,
@@ -188,6 +189,7 @@ impl Widget {
         Widget::Claude,
         Widget::Codex,
         Widget::Antigravity,
+        Widget::Cursor,
         Widget::DeepSeek,
         Widget::Controls,
         Widget::Battery,
@@ -225,6 +227,7 @@ impl Widget {
             Widget::Progress => "progress",
             Widget::Antigravity => "antigravity",
             Widget::DeepSeek => "deepseek",
+            Widget::Cursor => "cursor",
         }
     }
 
@@ -250,6 +253,7 @@ impl Widget {
             Widget::Progress => "Day, month, year",
             Widget::Antigravity => "Antigravity limits",
             Widget::DeepSeek => "DeepSeek balance",
+            Widget::Cursor => "Cursor usage",
         }
     }
 

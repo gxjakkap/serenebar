@@ -3,7 +3,9 @@ use crate::calendar::Event;
 use crate::calendar::{fetch_ics, to_local};
 use crate::http::curl;
 use crate::limits::Limit;
-use crate::limits::{antigravity_limits, claude_limits, codex_limits, deepseek_balance, Balance};
+use crate::limits::{
+    antigravity_limits, claude_limits, codex_limits, cursor_limits, deepseek_balance, Balance,
+};
 use crate::weather::Weather;
 use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::sync::Mutex;
@@ -19,6 +21,7 @@ pub struct State {
     pub codex: Option<Vec<Limit>>,
     pub antigravity: Option<Vec<Limit>>,
     pub deepseek: Option<Vec<Balance>>,
+    pub cursor: Option<Vec<Limit>>,
     pub update: Option<crate::update::Release>,
     /// That release's installer, downloaded and checked.
     pub installer: Option<std::path::PathBuf>,
@@ -33,6 +36,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     codex: None,
     antigravity: None,
     deepseek: None,
+    cursor: None,
     update: None,
     installer: None,
     update_note: "",
@@ -63,7 +67,7 @@ pub enum Msg {
     CheckUpdate,
 }
 
-/// Weather and calendar every 15 minutes, Claude, Antigravity and DeepSeek every 5, Codex limits every minute,
+/// Weather and calendar every 15 minutes, Claude, Antigravity, Cursor and DeepSeek every 5, Codex limits every minute,
 /// releases once a day.
 pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
     let h = hwnd.0 as isize;
@@ -132,6 +136,10 @@ pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
                 }
                 if let Some(l) = antigravity_limits() {
                     STATE.lock().unwrap().antigravity = Some(l);
+                    changed = true;
+                }
+                if let Some(l) = cursor_limits() {
+                    STATE.lock().unwrap().cursor = Some(l);
                     changed = true;
                 }
                 let key = crate::system::unprotect(&cfg.deepseek_key);
