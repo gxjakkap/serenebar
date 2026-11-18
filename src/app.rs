@@ -950,6 +950,7 @@ impl App {
             Action::Start => system::press_keys(&[VK_LWIN]),
             Action::Language => system::press_keys(&[VK_LWIN, VK_SPACE]),
             Action::ShowDesktop => system::press_keys(&[VK_LWIN, VK_D]),
+            Action::Notifications => system::press_keys(&[VK_LWIN, VK_N]),
             Action::QuickSettings => system::press_keys(&[VK_LWIN, VK_A]), // Action Center on Windows 10
             Action::SystemSettings => system::open("ms-settings:"),
             Action::SettingsFolder => {

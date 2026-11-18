@@ -23,6 +23,7 @@ Not really. This is an experimental project that would unlikely to be maintained
 - **Quick controls** (`controls`): pick its buttons in Settings: Wi-Fi, Bluetooth, VPN, airplane mode, mobile hotspot, volume (click the bar, or scroll anywhere on the tile) and battery. The rest of the tile opens a panel with every app's own volume too.
 - **Hidden icons** (`tray`): a chevron that opens the notification-area icons in a grid above it.
 - **Show desktop** (`desktop`): minimises everything, or brings it back (Win+D).
+- **Notifications** (`notifications`): a bell that opens the notification centre (Win+N).
 - **Network speed** (`network`): download and upload speed of the network adapters. Clicking it opens Task Manager.
 - **Light and dark** (`theme`): switches Windows apps and the taskbar between light and dark mode.
 - **Day, month, year** (`progress`): how much of today, this month and this year has gone by, as three rings.

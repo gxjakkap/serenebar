@@ -139,6 +139,7 @@ pub fn tip(act: Action, d: &Data) -> Option<String> {
         Action::Start => "Start".into(),
         Action::Open(Panel::Tray) => "Hidden icons".into(),
         Action::ShowDesktop => "Show desktop".into(),
+        Action::Notifications => "Notifications".into(),
         Action::Wifi => radio("Wi-Fi"),
         Action::Bluetooth => radio("Bluetooth"),
         Action::Vpn => radio("VPN"),
@@ -201,6 +202,7 @@ pub enum Action {
     Update,   // opens the newer release's page
     DeepSeek, // opens DeepSeek's usage page
     Gmail,
+    Notifications,
 }
 
 #[derive(Default)]
@@ -374,7 +376,7 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
             (w + 8.0) * k
         }
         Widget::Lang if d.lang.is_some() => 46.0 * k,
-        Widget::Tray | Widget::Desktop | Widget::Theme => 24.0 * k,
+        Widget::Tray | Widget::Desktop | Widget::Theme | Widget::Notifications => 24.0 * k,
         Widget::System => 96.0 * k,
         Widget::Mic => 68.0 * k,
         Widget::Network => 92.0 * k,
@@ -600,6 +602,7 @@ pub fn draw_tiles(g: &Gfx, v: &View, d: &Data, full_w: Option<f32>) -> Vec<Hit<A
                 Widget::Progress => progress(g, v, d, x, y, w, h, &mut hits),
                 Widget::DeepSeek => deepseek(g, v, d, x, y, w, h, &mut hits),
                 Widget::Gmail => gmail(g, v, d, x, y, w, h, &mut hits),
+                Widget::Notifications => notifications(g, v, x, y, w, h, &mut hits),
             }
         }
     }
@@ -2038,5 +2041,20 @@ fn gmail(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut
         v.th.text,
         Align::Left,
     );
+    hits.push((x, y, w, h, act));
+}
+
+/// A bell. Clicking it opens the notification centre (Win+N).
+fn notifications(g: &Gfx, v: &View, x: f32, y: f32, w: f32, h: f32, hits: &mut Vec<Hit<Action>>) {
+    let k = v.m.k;
+    let act = Action::Notifications;
+    hover_backing(g, v, act, x, y, w, h);
+    let (cx, cy, c, t) = (x + w / 2.0, y + h / 2.0, v.th.text, 1.4 * k);
+    let (r, top, rim) = (4.2 * k, cy - 2.0 * k, cy + 3.5 * k);
+    g.arc_between(cx, top, r, -PI / 2.0, PI / 2.0, c, t);
+    g.line(cx - r, top, cx - r - 1.2 * k, rim, c, t);
+    g.line(cx + r, top, cx + r + 1.2 * k, rim, c, t);
+    g.line(cx - r - 1.8 * k, rim, cx + r + 1.8 * k, rim, c, t);
+    g.fill_circle(cx, rim + 2.2 * k, 1.3 * k, c);
     hits.push((x, y, w, h, act));
 }

@@ -177,11 +177,12 @@ pub enum Widget {
     DeepSeek,
     Cursor,
     Gmail,
+    Notifications,
 }
 
 impl Widget {
     /// In the order the settings window lists them.
-    pub const ALL: [Widget; 22] = [
+    pub const ALL: [Widget; 23] = [
         Widget::Weather,
         Widget::Media,
         Widget::System,
@@ -198,6 +199,7 @@ impl Widget {
         Widget::Tray,
         Widget::Lang,
         Widget::Desktop,
+        Widget::Notifications,
         Widget::Clock,
         Widget::DateClock,
         Widget::Mic,
@@ -231,6 +233,7 @@ impl Widget {
             Widget::DeepSeek => "deepseek",
             Widget::Cursor => "cursor",
             Widget::Gmail => "gmail",
+            Widget::Notifications => "notifications",
         }
     }
 
@@ -258,6 +261,7 @@ impl Widget {
             Widget::DeepSeek => "DeepSeek balance",
             Widget::Cursor => "Cursor usage",
             Widget::Gmail => "Gmail unread",
+            Widget::Notifications => "Notifications",
         }
     }
 
