@@ -311,7 +311,7 @@ impl Widget {
     pub fn variants(self) -> &'static [Variant] {
         use Variant::*;
         match self {
-            Widget::Clock => &[Large, Medium, Small],
+            Widget::Clock => &[Large, Medium, Small, SmallSeconds],
             Widget::Media => &[Large, ExtraLarge, Medium, Small],
             Widget::Date => &[FullDate, DayNumber],
             Widget::Claude | Widget::Codex | Widget::Antigravity | Widget::Cursor => {
@@ -329,21 +329,23 @@ pub enum Variant {
     Large,
     Medium,
     Small,
+    SmallSeconds,
     FullDate,
     DayNumber,
 }
 
 impl Variant {
-    pub const ALL: [Variant; 6] = [
+    pub const ALL: [Variant; 7] = [
         Variant::ExtraLarge,
         Variant::Large,
         Variant::Medium,
         Variant::Small,
+        Variant::SmallSeconds,
         Variant::FullDate,
         Variant::DayNumber,
     ];
     pub fn id(self) -> &'static str {
-        ["xl", "l", "m", "s", "full", "day"][self as usize]
+        ["xl", "l", "m", "s", "ss", "full", "day"][self as usize]
     }
     pub fn label(self) -> &'static str {
         [
@@ -351,6 +353,7 @@ impl Variant {
             "Large",
             "Medium",
             "Small",
+            "Small with seconds",
             "Full date",
             "Day number",
         ][self as usize]

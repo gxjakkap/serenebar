@@ -373,6 +373,8 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
         Widget::Clock => match v.s.variant(w) {
             Variant::Small if v.s.clock24 => 64.0 * k,
             Variant::Small => 84.0 * k,
+            Variant::SmallSeconds if v.s.clock24 => 84.0 * k,
+            Variant::SmallSeconds => 104.0 * k,
             Variant::Medium => 56.0 * k,
             _ => 100.0 * k,
         },
@@ -629,7 +631,7 @@ fn draw_tile(
         Widget::Weather => weather(g, v, d, x, y, w, h, hits),
         Widget::Date => date(g, v, d, x, y, w, h, hits),
         Widget::Clock => match v.s.variant(widget) {
-            Variant::Small => small_clock(g, v, d, x, y, w, h, hits),
+            Variant::Small | Variant::SmallSeconds => small_clock(g, v, d, x, y, w, h, hits),
             Variant::Medium => medium_clock(g, v, d, x, y, w, h, hits),
             _ => clock(g, v, d, x, y, w, h, hits),
         },
@@ -962,7 +964,7 @@ fn clock(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut
     hits.push((x, y, w, h, act));
 }
 
-/// Just the time, hours and minutes.
+/// Just the time: hours and minutes, and the seconds in the with-seconds look.
 fn small_clock(
     g: &Gfx,
     v: &View,
@@ -973,17 +975,45 @@ fn small_clock(
     h: f32,
     hits: &mut Vec<Hit<Action>>,
 ) {
+    let k = v.m.k;
     let act = Action::Open(Panel::Calendar);
     tile(g, v, x, y, w, h, v.hover == Some(act));
     let t = d.time;
-    let time = if v.s.clock24 {
-        format!("{}:{:02}", t.hour, t.minute)
+    let hour = if v.s.clock24 {
+        t.hour
     } else {
-        let ampm = if t.hour < 12 { "AM" } else { "PM" };
-        format!("{}:{:02} {ampm}", crate::dates::hour12(t.hour), t.minute)
+        crate::dates::hour12(t.hour)
     };
-    let f = font(v.m.k, 17.0);
-    g.text(&time, x, y, w, h, f, 600, v.th.text, Align::Center);
+    let hm = format!("{hour}:{:02}", t.minute);
+    // seconds, then AM/PM, in the sub colour like the large clock's seconds
+    let secs = if v.s.variant(Widget::Clock) == Variant::SmallSeconds {
+        format!(":{:02}", t.second)
+    } else {
+        String::new()
+    };
+    let ampm = match (v.s.clock24, t.hour < 12) {
+        (true, _) => "",
+        (false, true) => " AM",
+        (false, false) => " PM",
+    };
+    let tail = format!("{secs}{ampm}");
+    let (big, small) = (font(k, 17.0), font(k, 13.0));
+    let (wb, wt) = (g.measure(&hm, big, 600), g.measure(&tail, small, 500));
+    let x0 = x + (w - wb - wt) / 2.0;
+    g.text(&hm, x0, y, wb + 1.0, h, big, 600, v.th.text, Align::Left);
+    // nudged down to sit near the big digits' baseline
+    let ty = y + 1.5 * k;
+    g.text(
+        &tail,
+        x0 + wb,
+        ty,
+        wt + 1.0,
+        h,
+        small,
+        500,
+        v.th.sub,
+        Align::Left,
+    );
     hits.push((x, y, w, h, act));
 }
 
