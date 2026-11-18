@@ -682,6 +682,7 @@ fn feed_config(s: &Settings) -> FeedConfig {
         calendar: s.calendar.clone(),
         google_id: s.google_id.clone(),
         google_secret: s.google_secret.clone(),
+        deepseek_key: s.deepseek_key.clone(),
     }
 }
 
@@ -805,7 +806,7 @@ impl App {
         let f = feeds::snapshot();
         (self.d.weather, self.d.events, self.d.claude, self.d.codex) =
             (f.weather, f.events, f.claude, f.codex);
-        self.d.antigravity = f.antigravity;
+        (self.d.antigravity, self.d.deepseek) = (f.antigravity, f.deepseek);
         (self.d.update, self.d.update_note, self.installer) =
             (f.update, f.update_note, f.installer);
         self.d.weather_w = self.d.weather.as_ref().map_or(0.0, |wx| {
@@ -955,6 +956,7 @@ impl App {
                 }
             }
             Action::TaskManager => system::open("taskmgr.exe"),
+            Action::DeepSeek => system::open("https://platform.deepseek.com/usage"),
             // the release page when its installer couldn't be fetched or checked
             Action::Update => match (&self.installer, &self.d.update) {
                 (Some(_), _) => self.install(),

@@ -138,11 +138,11 @@ mod win {
     use super::*;
     use crate::http::{base64url, curl_any, curl_form};
     use crate::settings::Settings;
+    use crate::system::dpapi;
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
-    use windows::Win32::Foundation::*;
     use windows::Win32::Security::Cryptography::*;
     use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
 
@@ -172,42 +172,6 @@ mod win {
 
     pub fn connected() -> bool {
         token_path().exists()
-    }
-
-    fn dpapi(data: &[u8], protect: bool) -> Option<Vec<u8>> {
-        let input = CRYPT_INTEGER_BLOB {
-            cbData: data.len() as u32,
-            pbData: data.as_ptr() as *mut u8,
-        };
-        let mut out = CRYPT_INTEGER_BLOB::default();
-        unsafe {
-            if protect {
-                CryptProtectData(
-                    &input,
-                    None,
-                    None,
-                    None,
-                    None,
-                    CRYPTPROTECT_UI_FORBIDDEN,
-                    &mut out,
-                )
-                .ok()?;
-            } else {
-                CryptUnprotectData(
-                    &input,
-                    None,
-                    None,
-                    None,
-                    None,
-                    CRYPTPROTECT_UI_FORBIDDEN,
-                    &mut out,
-                )
-                .ok()?;
-            }
-            let bytes = std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec();
-            let _ = LocalFree(HLOCAL(out.pbData as _));
-            Some(bytes)
-        }
     }
 
     fn save_refresh(token: &str) -> bool {

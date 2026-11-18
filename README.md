@@ -17,6 +17,7 @@ Not really. This is an experimental project that would unlikely to be maintained
 - **Clock** (`clock`): It's a clock, what more to say about it.
 - **Claude** (`claude`) and **Codex** (`codex`): session and weekly plan limits with time to reset.
 - **Antigravity** (`antigravity`): Gemini's session and weekly limits on your Google AI plan, plus the pool for Claude and GPT models, read from the sign-in the Antigravity CLI (`agy`) keeps on this PC.
+- **DeepSeek** (`deepseek`): what's left on your DeepSeek API account. Add your API key under Settings › Feeds & accounts; it's kept encrypted for your Windows account.
 - **Quick controls** (`controls`): pick its buttons in Settings: Wi-Fi, Bluetooth, VPN, airplane mode, mobile hotspot, volume (click the bar, or scroll anywhere on the tile) and battery. The rest of the tile opens a panel with every app's own volume too.
 - **Hidden icons** (`tray`): a chevron that opens the notification-area icons in a grid above it.
 - **Show desktop** (`desktop`): minimises everything, or brings it back (Win+D).

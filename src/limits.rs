@@ -1,4 +1,4 @@
-//! AI plan limits: Claude, Codex and Antigravity.
+//! AI plan limits: Claude, Codex and Antigravity, and the DeepSeek balance.
 use crate::dates::iso_to_unix;
 use serde_json::Value;
 
@@ -272,6 +272,44 @@ pub fn oauth_clients(bin: &[u8]) -> Vec<(String, String)> {
     ids.iter()
         .flat_map(|i| secrets.iter().map(move |s| (i.clone(), s.clone())))
         .collect()
+}
+
+/// Money left on a pay-as-you-go account, in one currency.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Balance {
+    pub currency: String,
+    pub total: f64,
+}
+
+impl Balance {
+    /// "¥110.00", "$5.20", or the code in front for any other currency.
+    pub fn text(&self) -> String {
+        match self.currency.as_str() {
+            "CNY" => format!("¥{:.2}", self.total),
+            "USD" => format!("${:.2}", self.total),
+            c => format!("{c} {:.2}", self.total),
+        }
+    }
+}
+
+/// DeepSeek's `GET /user/balance`. The amounts come as strings.
+pub fn parse_deepseek(body: &str) -> Option<Vec<Balance>> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let out: Vec<Balance> = v["balance_infos"]
+        .as_array()?
+        .iter()
+        .filter_map(|b| {
+            let total = &b["total_balance"];
+            Some(Balance {
+                currency: b["currency"].as_str()?.to_string(),
+                total: total
+                    .as_str()
+                    .and_then(|t| t.parse().ok())
+                    .or(total.as_f64())?,
+            })
+        })
+        .collect();
+    (!out.is_empty()).then_some(out)
 }
 
 #[cfg(windows)]
@@ -582,6 +620,15 @@ mod win {
         parse_antigravity(&curl_post(url, &headers, &body)?)
     }
 
+    /// The balance on a DeepSeek account. The key only goes to DeepSeek.
+    pub fn deepseek_balance(key: &str) -> Option<Vec<crate::limits::Balance>> {
+        let headers = format!("Authorization: Bearer {key}\r\nAccept: application/json\r\n");
+        crate::limits::parse_deepseek(&curl(
+            "https://api.deepseek.com/user/balance",
+            Some(&headers),
+        )?)
+    }
+
     /// Codex CLI writes its rate limits into the session logs, so this reads the newest one.
     /// No network.
     pub fn codex_limits() -> Option<Vec<Limit>> {
@@ -740,5 +787,18 @@ mod tests {
         let mut bin = format!("\x00junk-12345.apps.{host}.com\x00\x01{id}\x00").into_bytes();
         bin.extend(format!("{secret}\x00{}-short\x00", "GOCSPX").bytes());
         assert_eq!(oauth_clients(&bin), [(id, secret)]);
+    }
+
+    #[test]
+    fn deepseek_balance_response() {
+        let b = r#"{"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"110.00","granted_balance":"10.00","topped_up_balance":"100.00"}]}"#;
+        let l = parse_deepseek(b).unwrap();
+        assert_eq!(l[0].text(), "¥110.00");
+        let usd = Balance {
+            currency: "USD".into(),
+            total: 5.2,
+        };
+        assert_eq!(usd.text(), "$5.20");
+        assert_eq!(parse_deepseek(r#"{"balance_infos":[]}"#), None);
     }
 }

@@ -197,7 +197,8 @@ pub enum Action {
     QuickSettings,
     SystemSettings,
     SettingsFolder,
-    Update, // opens the newer release's page
+    Update,   // opens the newer release's page
+    DeepSeek, // opens DeepSeek's usage page
 }
 
 #[derive(Default)]
@@ -214,6 +215,7 @@ pub struct Data {
     pub claude: Option<Vec<Limit>>,
     pub codex: Option<Vec<Limit>>,
     pub antigravity: Option<Vec<Limit>>,
+    pub deepseek: Option<Vec<crate::limits::Balance>>,
     pub update: Option<crate::update::Release>, // a newer release than this build
     pub update_note: &'static str,              // how a check from Settings went
     pub volume: Option<crate::controls::Volume>,
@@ -370,6 +372,7 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
         Widget::Mic => 68.0 * k,
         Widget::Network => 92.0 * k,
         Widget::Progress => 140.0 * k,
+        Widget::DeepSeek => 132.0 * k,
         Widget::Battery if d.battery.is_some() => 56.0 * k,
         Widget::Apps
         | Widget::Claude
@@ -586,6 +589,7 @@ pub fn draw_tiles(g: &Gfx, v: &View, d: &Data, full_w: Option<f32>) -> Vec<Hit<A
                 Widget::Network => network(g, v, d, x, y, w, h, &mut hits),
                 Widget::Theme => theme_toggle(g, v, x, y, w, h, &mut hits),
                 Widget::Progress => progress(g, v, d, x, y, w, h, &mut hits),
+                Widget::DeepSeek => deepseek(g, v, d, x, y, w, h, &mut hits),
             }
         }
     }
@@ -1891,5 +1895,64 @@ fn progress(
         let cx = x + w * (i as f32 * 2.0 + 1.0) / 6.0;
         ring(g, v, cx, y, h, frac, v.accent, label, &value);
     }
+    hits.push((x, y, w, h, act));
+}
+
+/// DeepSeek's mark, roughly: a white wave on its blue.
+fn deepseek_logo(g: &Gfx, x: f32, y: f32, s: f32) {
+    g.fill_rr(x, y, s, s, s * 0.24, rgba(0x4D6BFE, 1.0));
+    let (cx, cy) = (x + s / 2.0, y + s * 0.52);
+    g.arc_between(cx, cy, s * 0.26, 0.9, 2.0 * PI - 0.5, white(1.0), s * 0.09);
+    g.fill_circle(cx + s * 0.08, cy - s * 0.08, s * 0.05, white(1.0));
+}
+
+/// What's left on the DeepSeek account. Without a key it asks for one in Settings.
+fn deepseek(
+    g: &Gfx,
+    v: &View,
+    d: &Data,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hits: &mut Vec<Hit<Action>>,
+) {
+    let k = v.m.k;
+    let keyed = !v.s.deepseek_key.is_empty();
+    let act = if keyed {
+        Action::DeepSeek
+    } else {
+        Action::Settings
+    };
+    tile(g, v, x, y, w, h, v.hover == Some(act));
+    deepseek_logo(g, x + 6.0 * k, y + (h - 30.0 * k) / 2.0, 30.0 * k);
+    let (tx, tw) = (x + 42.0 * k, w - 48.0 * k);
+    let (label, amount) = match (&d.deepseek, keyed) {
+        (Some(b), _) => ("Balance", b.first().map(|b| b.text()).unwrap_or_default()),
+        (None, true) => ("Balance", "…".to_string()),
+        (None, false) => ("DeepSeek", "Add a key".to_string()),
+    };
+    g.text(
+        label,
+        tx,
+        y + 5.0 * k,
+        tw,
+        15.0 * k,
+        font(k, 10.0),
+        500,
+        v.th.sub,
+        Align::Left,
+    );
+    g.text(
+        &amount,
+        tx,
+        y + 19.0 * k,
+        tw,
+        20.0 * k,
+        font(k, 14.0),
+        600,
+        v.th.text,
+        Align::Left,
+    );
     hits.push((x, y, w, h, act));
 }

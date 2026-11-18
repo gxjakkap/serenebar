@@ -12,6 +12,7 @@ pub enum Field {
     Calendar,
     GoogleId,
     GoogleSecret,
+    DeepSeek,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -60,7 +61,7 @@ impl Tab {
     const ALL: [Tab; 4] = [Tab::Appearance, Tab::Dock, Tab::Widgets, Tab::Feeds];
 
     fn title(self) -> &'static str {
-        ["Appearance", "Dock", "Widgets", "Weather & Calendar"][self as usize]
+        ["Appearance", "Dock", "Widgets", "Feeds & accounts"][self as usize]
     }
 }
 
@@ -68,7 +69,7 @@ impl Tab {
 pub struct State {
     pub tab: Tab,
     pub rows: Vec<WidgetRow>,
-    fields: [String; 4], // indexed by Field
+    fields: [String; 5], // indexed by Field
     pub focus: Option<Field>,
     caret: usize,     // in chars
     select_all: bool, // Ctrl+A: the next edit replaces the whole field
@@ -167,6 +168,7 @@ impl State {
                 s.calendar.clone(),
                 s.google_id.clone(),
                 s.google_secret.clone(),
+                crate::system::unprotect(&s.deepseek_key),
             ],
             focus: None,
             caret: 0,
@@ -187,6 +189,15 @@ impl State {
         s.calendar = self.get(Field::Calendar).to_string();
         s.google_id = self.get(Field::GoogleId).to_string();
         s.google_secret = self.get(Field::GoogleSecret).to_string();
+        // encrypting gives new bytes each time, so only a changed key is written
+        let key = self.get(Field::DeepSeek);
+        if key != crate::system::unprotect(&s.deepseek_key) {
+            s.deepseek_key = if key.is_empty() {
+                String::new()
+            } else {
+                crate::system::protect(key)
+            };
+        }
     }
 
     /// A text field as typed, trimmed.
@@ -435,7 +446,7 @@ impl Ctx<'_> {
         let raw = &st.fields[f as usize];
         // the secret shows as dots
         let masked = "•".repeat(raw.chars().count());
-        let text = if f == Field::GoogleSecret {
+        let text = if matches!(f, Field::GoogleSecret | Field::DeepSeek) {
             &masked
         } else {
             raw
@@ -979,6 +990,28 @@ fn feeds(g: &Gfx, c: &mut Ctx, st: &State, s: &Settings, flags: &Flags, x0: f32,
         let note = flags.google_status.as_str();
         g.text(note, x0, 370.0, cw, 18.0, 10.5, 400, c.p.sub, Align::Left);
     }
+
+    c.title(g, "DeepSeek", x0, 414.0);
+    c.field(
+        g,
+        st,
+        Field::DeepSeek,
+        x0,
+        444.0,
+        cw,
+        "API key, for the balance widget",
+    );
+    g.text(
+        "From platform.deepseek.com. It's kept encrypted for your Windows account.",
+        x0,
+        480.0,
+        cw,
+        18.0,
+        10.5,
+        400,
+        c.p.sub,
+        Align::Left,
+    );
 
     // city suggestions, over whatever is below the field and ahead of it in the hits
     if !st.places.is_empty() {

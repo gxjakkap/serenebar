@@ -174,11 +174,12 @@ pub enum Widget {
     Theme,
     Progress,
     Antigravity,
+    DeepSeek,
 }
 
 impl Widget {
     /// In the order the settings window lists them.
-    pub const ALL: [Widget; 19] = [
+    pub const ALL: [Widget; 20] = [
         Widget::Weather,
         Widget::Media,
         Widget::System,
@@ -187,6 +188,7 @@ impl Widget {
         Widget::Claude,
         Widget::Codex,
         Widget::Antigravity,
+        Widget::DeepSeek,
         Widget::Controls,
         Widget::Battery,
         Widget::Tray,
@@ -222,6 +224,7 @@ impl Widget {
             Widget::Theme => "theme",
             Widget::Progress => "progress",
             Widget::Antigravity => "antigravity",
+            Widget::DeepSeek => "deepseek",
         }
     }
 
@@ -246,6 +249,7 @@ impl Widget {
             Widget::Theme => "Light and dark",
             Widget::Progress => "Day, month, year",
             Widget::Antigravity => "Antigravity limits",
+            Widget::DeepSeek => "DeepSeek balance",
         }
     }
 
@@ -340,6 +344,8 @@ pub struct Settings {
     /// secret as not confidential, so it lives here; the refresh token is kept encrypted elsewhere.
     pub google_id: String,
     pub google_secret: String,
+    /// DeepSeek API key, encrypted with DPAPI for this Windows account and base64'd.
+    pub deepseek_key: String,
     pub lat: Option<f64>,
     pub lon: Option<f64>,
     pub fahrenheit: bool,
@@ -378,6 +384,7 @@ impl Default for Settings {
             calendar: String::new(),
             google_id: String::new(),
             google_secret: String::new(),
+            deepseek_key: String::new(),
             lat: None,
             lon: None,
             fahrenheit: false,
@@ -452,6 +459,7 @@ impl Settings {
                 "calendar" => s.calendar = v.to_string(),
                 "google_client_id" => s.google_id = v.to_string(),
                 "google_client_secret" => s.google_secret = v.to_string(),
+                "deepseek_key" => s.deepseek_key = v.to_string(),
                 "latitude" => s.lat = v.parse().ok(),
                 "longitude" => s.lon = v.parse().ok(),
                 "units" => s.fahrenheit = v == "f",
@@ -480,13 +488,16 @@ impl Settings {
              city={}\nlatitude={}\nlongitude={}\nunits={}\n\
              # calendar: the secret iCal (.ics) link from Google, Outlook or iCloud\ncalendar={}\n\
              # Google Calendar sign-in: an OAuth client (Desktop app) from your Google Cloud project\n\
-             google_client_id={}\ngoogle_client_secret={}\n",
+             google_client_id={}\ngoogle_client_secret={}\n\
+             # DeepSeek API key, encrypted so only this Windows account can read it. Set it in Settings.\n\
+             deepseek_key={}\n",
             self.style.name(), self.size.id(), if self.top { "top" } else { "bottom" },
             if self.full { "full" } else { "pill" }, if self.every_monitor { "all" } else { "primary" }, ACCENTS[self.accent].1.to_lowercase(),
             if self.clock24 { 24 } else { 12 }, if self.hide_taskbar { "hidden" } else { "autohide" },
             if self.auto_update { "auto" } else { "manual" },
             widgets.join(","), controls.join(","), self.app_order.join("|"), self.pins.join("|"), self.city, opt(self.lat), opt(self.lon),
             if self.fahrenheit { "f" } else { "c" }, self.calendar, self.google_id, self.google_secret,
+            self.deepseek_key,
         )
     }
 
@@ -652,6 +663,8 @@ mod tests {
             (g2.google_id.as_str(), g2.google_secret.as_str()),
             ("123.apps.googleusercontent.com", "GOCSPX-x")
         );
+        let k = parse_test("deepseek_key=AQAAANCMnd8B+/=");
+        assert_eq!(parse_test(&k.to_ini()).deepseek_key, "AQAAANCMnd8B+/=");
         let d = parse_test("garbage\nstyle=nope");
         assert!(d.style == Style::Lagoon && d.size == Size::M);
         assert_eq!(
