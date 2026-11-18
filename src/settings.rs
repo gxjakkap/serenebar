@@ -172,11 +172,12 @@ pub enum Widget {
     Mic,
     Network,
     Theme,
+    Progress,
 }
 
 impl Widget {
     /// In the order the settings window lists them.
-    pub const ALL: [Widget; 17] = [
+    pub const ALL: [Widget; 18] = [
         Widget::Weather,
         Widget::Media,
         Widget::System,
@@ -194,6 +195,7 @@ impl Widget {
         Widget::Mic,
         Widget::Network,
         Widget::Theme,
+        Widget::Progress,
     ];
 
     /// Its name in the settings file.
@@ -216,6 +218,7 @@ impl Widget {
             Widget::Mic => "mic",
             Widget::Network => "network",
             Widget::Theme => "theme",
+            Widget::Progress => "progress",
         }
     }
 
@@ -238,6 +241,7 @@ impl Widget {
             Widget::Mic => "Mute and deafen",
             Widget::Network => "Network speed",
             Widget::Theme => "Light and dark",
+            Widget::Progress => "Day, month, year",
         }
     }
 

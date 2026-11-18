@@ -366,6 +366,7 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
         Widget::System => 96.0 * k,
         Widget::Mic => 68.0 * k,
         Widget::Network => 92.0 * k,
+        Widget::Progress => 140.0 * k,
         Widget::Battery if d.battery.is_some() => 56.0 * k,
         Widget::Apps | Widget::Claude | Widget::Codex | Widget::Lang | Widget::Battery => {
             return None
@@ -599,6 +600,7 @@ pub fn draw_tiles(g: &Gfx, v: &View, d: &Data, full_w: Option<f32>) -> Vec<Hit<A
                 Widget::Mic => mic(g, v, d, x, y, w, h, &mut hits),
                 Widget::Network => network(g, v, d, x, y, w, h, &mut hits),
                 Widget::Theme => theme_toggle(g, v, x, y, w, h, &mut hits),
+                Widget::Progress => progress(g, v, d, x, y, w, h, &mut hits),
             }
         }
     }
@@ -1854,4 +1856,26 @@ fn theme_toggle(g: &Gfx, v: &View, x: f32, y: f32, w: f32, h: f32, hits: &mut Ve
         .collect();
     g.poly(&half, v.th.text);
     hits.push((x, y, w, h, Action::Theme));
+}
+
+/// How far through today, this month and this year we are, as three rings.
+fn progress(
+    g: &Gfx,
+    v: &View,
+    d: &Data,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hits: &mut Vec<Hit<Action>>,
+) {
+    let act = Action::Open(Panel::Calendar);
+    tile(g, v, x, y, w, h, v.hover == Some(act));
+    let fracs = crate::dates::progress(d.time);
+    for (i, (frac, label)) in fracs.into_iter().zip(["Day", "Month", "Year"]).enumerate() {
+        let value = format!("{:.0}", (frac * 100.0).floor());
+        let cx = x + w * (i as f32 * 2.0 + 1.0) / 6.0;
+        ring(g, v, cx, y, h, frac, v.accent, label, &value);
+    }
+    hits.push((x, y, w, h, act));
 }
