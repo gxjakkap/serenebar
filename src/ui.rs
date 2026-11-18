@@ -361,6 +361,8 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
         Widget::Apps if !d.apps.is_empty() => icons_w(v, 1..d.apps.len() + 1),
         Widget::Media => 196.0 * k,
         Widget::Weather => (WEATHER_PAD + d.weather_w).max(150.0) * k,
+        Widget::Date if v.s.variant(w) == Variant::DayNumber => 46.0 * k,
+        Widget::Date => 128.0 * k, // room for "September 30"
         Widget::Clock => match v.s.variant(w) {
             Variant::Small if v.s.clock24 => 64.0 * k,
             Variant::Small => 84.0 * k,
@@ -593,6 +595,7 @@ pub fn draw_tiles(g: &Gfx, v: &View, d: &Data, full_w: Option<f32>) -> Vec<Hit<A
                 Widget::Apps => icons(g, v, d, x, y, h, 1..d.apps.len() + 1, &mut hits),
                 Widget::Media => media(g, v, d, x, y, w, h, &mut hits),
                 Widget::Weather => weather(g, v, d, x, y, w, h, &mut hits),
+                Widget::Date => date(g, v, d, x, y, w, h, &mut hits),
                 Widget::Clock => match v.s.variant(widget) {
                     Variant::Small => small_clock(g, v, d, x, y, w, h, &mut hits),
                     Variant::TearOff => dateclock(g, v, d, x, y, w, h, &mut hits),
@@ -2166,5 +2169,68 @@ fn notifications(g: &Gfx, v: &View, x: f32, y: f32, w: f32, h: f32, hits: &mut V
     g.line(cx + r, top, cx + r + 1.2 * k, rim, c, t);
     g.line(cx - r - 1.8 * k, rim, cx + r + 1.8 * k, rim, c, t);
     g.fill_circle(cx, rim + 2.2 * k, 1.3 * k, c);
+    hits.push((x, y, w, h, act));
+}
+
+/// Today's date: the weekday over the day and month, or a calendar page with the day number.
+fn date(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut Vec<Hit<Action>>) {
+    let k = v.m.k;
+    let act = Action::Open(Panel::Calendar);
+    tile(g, v, x, y, w, h, v.hover == Some(act));
+    let t = d.time;
+    let wd = crate::dates::weekday(t.days());
+    if v.s.variant(Widget::Date) == Variant::DayNumber {
+        let red = rgba(if v.th.dark { 0xFF453A } else { 0xD70015 }, 1.0);
+        let short = crate::dates::day_name(wd).to_uppercase();
+        g.text(
+            &short,
+            x,
+            y + 4.0 * k,
+            w,
+            13.0 * k,
+            font(k, 10.0),
+            700,
+            red,
+            Align::Center,
+        );
+        let day = t.day.to_string();
+        g.text(
+            &day,
+            x,
+            y + 15.0 * k,
+            w,
+            h - 17.0 * k,
+            font(k, 19.0),
+            600,
+            v.th.text,
+            Align::Center,
+        );
+    } else {
+        let (tx, tw) = (x + 10.0 * k, w - 20.0 * k);
+        let name = crate::dates::day_full_name(wd);
+        g.text(
+            name,
+            tx,
+            y + 5.0 * k,
+            tw,
+            15.0 * k,
+            font(k, 10.0),
+            600,
+            v.th.sub,
+            Align::Left,
+        );
+        let day = format!("{} {}", crate::dates::month_name(t.month), t.day);
+        g.text(
+            &day,
+            tx,
+            y + 19.0 * k,
+            tw,
+            20.0 * k,
+            font(k, 15.0),
+            700,
+            v.th.text,
+            Align::Left,
+        );
+    }
     hits.push((x, y, w, h, act));
 }

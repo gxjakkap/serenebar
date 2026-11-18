@@ -68,6 +68,19 @@ pub fn day_name(weekday: u32) -> &'static str {
     WEEKDAYS[weekday as usize % 7]
 }
 
+/// "Monday" for weekday 1.
+pub fn day_full_name(weekday: u32) -> &'static str {
+    [
+        "Sunday",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+    ][weekday as usize % 7]
+}
+
 /// "November" for month 11.
 pub fn month_name(month: u32) -> &'static str {
     MONTHS[(month as usize + 11) % 12]

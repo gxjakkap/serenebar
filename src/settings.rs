@@ -177,12 +177,13 @@ pub enum Widget {
     Cursor,
     Gmail,
     Notifications,
+    Date,
 }
 
 impl Widget {
     /// In the order the settings window lists them.
     /// Antigravity isn't offered yet: its numbers didn't match the app's on a Starter plan.
-    pub const ALL: [Widget; 21] = [
+    pub const ALL: [Widget; 22] = [
         Widget::Weather,
         Widget::Media,
         Widget::System,
@@ -200,6 +201,7 @@ impl Widget {
         Widget::Desktop,
         Widget::Notifications,
         Widget::Clock,
+        Widget::Date,
         Widget::Mic,
         Widget::Network,
         Widget::Theme,
@@ -231,6 +233,7 @@ impl Widget {
             Widget::Cursor => "cursor",
             Widget::Gmail => "gmail",
             Widget::Notifications => "notifications",
+            Widget::Date => "date",
         }
     }
 
@@ -258,6 +261,7 @@ impl Widget {
             Widget::Cursor => "Cursor usage",
             Widget::Gmail => "Gmail unread",
             Widget::Notifications => "Notifications",
+            Widget::Date => "Date",
         }
     }
 
@@ -279,6 +283,7 @@ impl Widget {
         use Variant::*;
         match self {
             Widget::Clock => &[Large, Small, TearOff],
+            Widget::Date => &[FullDate, DayNumber],
             Widget::Claude | Widget::Codex | Widget::Antigravity | Widget::Cursor => {
                 &[Large, Medium, Small]
             }
@@ -295,21 +300,33 @@ pub enum Variant {
     Medium,
     Small,
     TearOff,
+    FullDate,
+    DayNumber,
 }
 
 impl Variant {
-    pub const ALL: [Variant; 5] = [
+    pub const ALL: [Variant; 7] = [
         Variant::ExtraLarge,
         Variant::Large,
         Variant::Medium,
         Variant::Small,
         Variant::TearOff,
+        Variant::FullDate,
+        Variant::DayNumber,
     ];
     pub fn id(self) -> &'static str {
-        ["xl", "l", "m", "s", "tearoff"][self as usize]
+        ["xl", "l", "m", "s", "tearoff", "full", "day"][self as usize]
     }
     pub fn label(self) -> &'static str {
-        ["Extra large", "Large", "Medium", "Small", "Tear-off"][self as usize]
+        [
+            "Extra large",
+            "Large",
+            "Medium",
+            "Small",
+            "Tear-off",
+            "Full date",
+            "Day number",
+        ][self as usize]
     }
 }
 
