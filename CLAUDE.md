@@ -29,6 +29,7 @@ src/prefs.rs     the settings window and its editing state
 src/app.rs       windows and input, one action dispatcher, one settings pipeline
 build.rs         embeds icons/serenebar.ico into the exe (Windows targets)
 icons/           app icon: serenebar.svg is the source; PNGs and the .ico are rendered from it
+icons/brands/    the AI labs' marks, built into the exe for their tiles
 prek.toml        git hooks: fmt and clippy before commit, commit message rules
 committed.toml   conventional-commit rules for the commit-msg hook
 ```

@@ -1065,57 +1065,50 @@ fn ai_panel(w: Widget) -> Panel {
     }
 }
 
-/// Claude: an orange square with a starburst. Codex: a white square with a hexagon.
-/// Antigravity: a white square with Gemini's four-pointed star. Cursor: a cube on black.
+/// The AI labs' own marks, drawn on their brand colours.
+const BRANDS: [(&str, &[u8]); 4] = [
+    ("brand:claude", include_bytes!("../icons/brands/claude.png")),
+    ("brand:openai", include_bytes!("../icons/brands/openai.png")),
+    ("brand:cursor", include_bytes!("../icons/brands/cursor.png")),
+    (
+        "brand:deepseek",
+        include_bytes!("../icons/brands/deepseek.png"),
+    ),
+];
+
+/// A brand's mark, `inset` of the way in from each side of an `s` square at (x, y), on a
+/// rounded square of `bg`. The mark keeps its own shape; the square only frames it.
+fn brand(g: &Gfx, i: usize, bg: C, inset: f32, x: f32, y: f32, s: f32) {
+    let (key, bytes) = BRANDS[i];
+    g.image(key, 1, |g| g.bitmap_from_bytes(bytes));
+    g.fill_rr(x, y, s, s, s * 0.24, bg);
+    let Some(b) = g.cached(key) else { return };
+    let size = unsafe { b.GetSize() };
+    let box_ = s * (1.0 - 2.0 * inset);
+    let f = box_ / size.width.max(size.height);
+    let (w, h) = (size.width * f, size.height * f);
+    g.bitmap(&b, x + (s - w) / 2.0, y + (s - h) / 2.0, w, h);
+}
+
+/// Claude on its orange, OpenAI's knot for Codex on black, Cursor's cube on white, and for
+/// Antigravity, Gemini's four-pointed star drawn on white.
 pub fn ai_logo(g: &Gfx, which: Panel, x: f32, y: f32, s: f32) {
-    let (cx, cy) = (x + s / 2.0, y + s / 2.0);
-    if which == Panel::Cursor {
-        g.fill_rr(x, y, s, s, s * 0.24, rgba(0x141414, 1.0));
-        let p = |i: usize| {
-            let a = i as f32 * PI / 3.0;
-            (cx + a.sin() * s * 0.28, cy - a.cos() * s * 0.28)
-        };
-        for i in 0..6 {
-            let ((x0, y0), (x1, y1)) = (p(i), p(i + 1));
-            g.line(x0, y0, x1, y1, white(1.0), s * 0.06);
-        }
-        for i in [0, 2, 4] {
-            let (x1, y1) = p(i);
-            g.line(cx, cy, x1, y1, white(0.7), s * 0.05);
-        }
-    } else if which == Panel::Antigravity {
-        g.fill_rr(x, y, s, s, s * 0.24, white(1.0));
-        let (r, n) = (s * 0.34, s * 0.06); // tip and waist
-        let star: Vec<(f32, f32)> = (0..8)
-            .map(|i| {
-                let a = i as f32 * PI / 4.0;
-                let d = if i % 2 == 0 { r } else { n };
-                (cx + a.sin() * d, cy - a.cos() * d)
-            })
-            .collect();
-        g.poly(&star, rgba(0x4C7BF3, 1.0));
-    } else if which == Panel::Claude {
-        g.fill_rr(x, y, s, s, s * 0.24, rgba(0xD97757, 1.0));
-        for i in 0..8 {
-            let a = i as f32 * PI / 4.0 + 0.2;
-            g.line(
-                cx + a.sin() * s * 0.07,
-                cy - a.cos() * s * 0.07,
-                cx + a.sin() * s * 0.31,
-                cy - a.cos() * s * 0.31,
-                white(1.0),
-                s * 0.085,
-            );
-        }
-    } else {
-        g.fill_rr(x, y, s, s, s * 0.24, white(1.0));
-        let p = |i: usize| {
-            let a = i as f32 * PI / 3.0;
-            (cx + a.sin() * s * 0.27, cy - a.cos() * s * 0.27)
-        };
-        for i in 0..6 {
-            let ((x0, y0), (x1, y1)) = (p(i), p(i + 1));
-            g.line(x0, y0, x1, y1, rgba(0x111111, 1.0), s * 0.08);
+    match which {
+        Panel::Claude => brand(g, 0, rgba(0xD97757, 1.0), 0.2, x, y, s),
+        Panel::Codex => brand(g, 1, rgba(0x0D0D0D, 1.0), 0.18, x, y, s),
+        Panel::Cursor => brand(g, 2, white(1.0), 0.2, x, y, s),
+        _ => {
+            let (cx, cy) = (x + s / 2.0, y + s / 2.0);
+            g.fill_rr(x, y, s, s, s * 0.24, white(1.0));
+            let (r, n) = (s * 0.34, s * 0.06); // tip and waist
+            let star: Vec<(f32, f32)> = (0..8)
+                .map(|i| {
+                    let a = i as f32 * PI / 4.0;
+                    let d = if i % 2 == 0 { r } else { n };
+                    (cx + a.sin() * d, cy - a.cos() * d)
+                })
+                .collect();
+            g.poly(&star, rgba(0x4C7BF3, 1.0));
         }
     }
 }
@@ -2148,12 +2141,9 @@ fn progress(
     hits.push((x, y, w, h, act));
 }
 
-/// DeepSeek's mark, roughly: a white wave on its blue.
+/// DeepSeek's whale on white.
 fn deepseek_logo(g: &Gfx, x: f32, y: f32, s: f32) {
-    g.fill_rr(x, y, s, s, s * 0.24, rgba(0x4D6BFE, 1.0));
-    let (cx, cy) = (x + s / 2.0, y + s * 0.52);
-    g.arc_between(cx, cy, s * 0.26, 0.9, 2.0 * PI - 0.5, white(1.0), s * 0.09);
-    g.fill_circle(cx + s * 0.08, cy - s * 0.08, s * 0.05, white(1.0));
+    brand(g, 3, white(1.0), 0.12, x, y, s);
 }
 
 /// What's left on the DeepSeek account. Without a key it asks for one in Settings.
