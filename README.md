@@ -10,7 +10,7 @@ Not really. This is an experimental project that would unlikely to be maintained
 
 ## Widgets
 
-Tiles with more than one look have a select on their row in Settings › Widgets to pick it.
+Add tiles with the + by a group in Settings › Widgets: it opens a picker with a preview of each. Tiles with more than one look have a select on their row to pick it.
 
 - **Start** (`start`): the Windows 11 Start logo
 - **Apps** (`apps`): the dock's pinned apps, then other open apps in the order they opened

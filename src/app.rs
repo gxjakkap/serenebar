@@ -1299,7 +1299,7 @@ impl App {
         let (o, sc, dy) = opening(p.opened);
         p.g.begin();
         p.g.push_fade(o, sc, w / 2.0, h / 2.0, dy);
-        p.hits = prefs::draw(&p.g, &p.st, &self.s, flags, w, h);
+        p.hits = prefs::draw(&p.g, &p.st, &self.s, &self.d, flags, w, h);
         p.g.pop_fade();
         p.g.end();
     }
@@ -1423,16 +1423,18 @@ impl App {
                 self.change(|s| s.widgets = widgets);
             }
             Act::Add(group) => {
+                if let Some(p) = &mut self.prefs {
+                    p.st.open_picker(group);
+                }
+            }
+            Act::ClosePicker => {
+                if let Some(p) = &mut self.prefs {
+                    p.st.picker = None;
+                }
+            }
+            Act::AddWidget(i) => {
                 let Some(p) = &mut self.prefs else { return };
-                let hidden: Vec<usize> =
-                    (0..p.st.rows.len()).filter(|&i| !p.st.rows[i].on).collect();
-                let cmd = popup_menu(p.hwnd, true, |m| unsafe {
-                    for (n, &i) in hidden.iter().enumerate() {
-                        let label = HSTRING::from(p.st.rows[i].widget.label());
-                        let _ = AppendMenuW(m, MF_STRING, n + 1, &label);
-                    }
-                });
-                let Some(&i) = (cmd as usize).checked_sub(1).and_then(|n| hidden.get(n)) else {
+                let Some(group) = p.st.picker.take() else {
                     return;
                 };
                 p.st.add(i, group);
@@ -1454,7 +1456,7 @@ impl App {
             }
             Act::Tab(t) => {
                 if let Some(p) = &mut self.prefs {
-                    p.st.tab = t
+                    (p.st.tab, p.st.picker) = (t, None);
                 }
             }
             Act::Drag(_) => {}
@@ -1512,11 +1514,24 @@ impl App {
         self.draw_prefs();
     }
 
+    /// The wheel scrolls the widget picker, a notch at a time.
+    fn prefs_wheel(&mut self, wp: WPARAM) {
+        let Some(p) = self.prefs.as_mut().filter(|p| p.st.picker.is_some()) else {
+            return;
+        };
+        let notches = ((wp.0 >> 16) & 0xFFFF) as i16 as f32 / 120.0;
+        let h = p.g.h as f32 / p.g.k;
+        p.st.scroll_picker(-notches * 64.0, h);
+        self.draw_prefs();
+    }
+
     fn prefs_key(&mut self, vk: u16) {
         let Some(p) = &mut self.prefs else { return };
         if vk == VK_ESCAPE.0 {
             if p.st.focus.is_some() {
                 self.commit_field();
+            } else if p.st.picker.take().is_some() {
+                self.draw_prefs();
             } else {
                 self.close_prefs();
             }
@@ -1963,6 +1978,7 @@ extern "system" fn prefs_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> L
         WM_MOUSELEAVE => with_app(|a| a.leave_popup()),
         WM_LBUTTONUP => with_app(|a| a.prefs_click(lp)),
         WM_CHAR => with_app(|a| a.prefs_char(wp.0 as u32)),
+        WM_MOUSEWHEEL => with_app(|a| a.prefs_wheel(wp)),
         WM_KEYDOWN => with_app(|a| a.prefs_key(wp.0 as u16)),
         WM_ACTIVATE if (wp.0 & 0xFFFF) as u32 == WA_INACTIVE => with_app(|a| a.commit_field()),
         WM_CLOSE => with_app(|a| a.close_prefs()),

@@ -755,6 +755,12 @@ impl Gfx {
         unsafe { self.dc.SetTransform(&m) }
     }
 
+    pub fn transform(&self) -> Matrix3x2 {
+        let mut m = Matrix3x2::default();
+        unsafe { self.dc.GetTransform(&mut m) };
+        m
+    }
+
     pub fn poly(&self, pts: &[(f32, f32)], c: C) {
         unsafe {
             let Ok(path) = self.factory.CreatePathGeometry() else {

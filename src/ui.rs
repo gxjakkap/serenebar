@@ -597,51 +597,62 @@ pub fn draw_tiles(g: &Gfx, v: &View, d: &Data, full_w: Option<f32>) -> Vec<Hit<A
         let p = ((v.intro - POP_DELAY - POP_STAGGER * i as f32) / POP).clamp(0.0, 1.0);
         if p > 0.0 {
             g.set_transform(about(ease_out_back(p), x + w / 2.0, y + h / 2.0, v));
-            match widget {
-                Widget::Start => icons(g, v, d, x, y, h, 0..1, &mut hits),
-                Widget::Apps => icons(g, v, d, x, y, h, 1..d.apps.len() + 1, &mut hits),
-                Widget::Media => match v.s.variant(widget) {
-                    Variant::ExtraLarge | Variant::Medium => {
-                        media_card(g, v, d, x, y, w, h, &mut hits)
-                    }
-                    Variant::Small => media_mini(g, v, d, x, y, w, h, &mut hits),
-                    _ => media(g, v, d, x, y, w, h, &mut hits),
-                },
-                Widget::Weather => weather(g, v, d, x, y, w, h, &mut hits),
-                Widget::Date => date(g, v, d, x, y, w, h, &mut hits),
-                Widget::Clock => match v.s.variant(widget) {
-                    Variant::Small => small_clock(g, v, d, x, y, w, h, &mut hits),
-                    Variant::Medium => medium_clock(g, v, d, x, y, w, h, &mut hits),
-                    _ => clock(g, v, d, x, y, w, h, &mut hits),
-                },
-                Widget::Claude | Widget::Codex | Widget::Antigravity | Widget::Cursor => {
-                    match v.s.variant(widget) {
-                        Variant::Medium | Variant::Small => {
-                            ai_compact(g, v, d, widget, x, y, w, h, &mut hits)
-                        }
-                        _ => ai(g, v, d, ai_panel(widget), x, y, w, h, &mut hits),
-                    }
-                }
-                Widget::Controls => controls(g, v, d, x, y, w, h, &mut hits),
-                Widget::Lang => lang(g, v, d, x, y, w, h, &mut hits),
-                Widget::Tray => tray(g, v, x, y, w, h, &mut hits),
-                Widget::Desktop => desktop(g, v, x, y, w, h, &mut hits),
-                Widget::System => system(g, v, d, x, y, w, h, &mut hits),
-                Widget::Battery => battery(g, v, d, x, y, w, h),
-                Widget::Mic => mic(g, v, d, x, y, w, h, &mut hits),
-                Widget::Network => network(g, v, d, x, y, w, h, &mut hits),
-                Widget::Theme => theme_toggle(g, v, d, x, y, w, h, &mut hits),
-                Widget::Progress => progress(g, v, d, x, y, w, h, &mut hits),
-                Widget::DeepSeek => deepseek(g, v, d, x, y, w, h, &mut hits),
-                Widget::Gmail => gmail(g, v, d, x, y, w, h, &mut hits),
-                Widget::Notifications => notifications(g, v, x, y, w, h, &mut hits),
-            }
+            draw_tile(g, v, d, widget, x, y, w, h, &mut hits);
         }
     }
     g.set_transform(about(1.0, 0.0, 0.0, v));
     draw_tip(g, v, &hits, full_w.unwrap_or_else(|| content_width(d, v)));
     g.set_transform(Matrix3x2::identity());
     hits
+}
+
+/// One tile, drawn at (x, y) in the size `tile_w` gives it.
+fn draw_tile(
+    g: &Gfx,
+    v: &View,
+    d: &Data,
+    widget: Widget,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hits: &mut Vec<Hit<Action>>,
+) {
+    match widget {
+        Widget::Start => icons(g, v, d, x, y, h, 0..1, hits),
+        Widget::Apps => icons(g, v, d, x, y, h, 1..d.apps.len() + 1, hits),
+        Widget::Media => match v.s.variant(widget) {
+            Variant::ExtraLarge | Variant::Medium => media_card(g, v, d, x, y, w, h, hits),
+            Variant::Small => media_mini(g, v, d, x, y, w, h, hits),
+            _ => media(g, v, d, x, y, w, h, hits),
+        },
+        Widget::Weather => weather(g, v, d, x, y, w, h, hits),
+        Widget::Date => date(g, v, d, x, y, w, h, hits),
+        Widget::Clock => match v.s.variant(widget) {
+            Variant::Small => small_clock(g, v, d, x, y, w, h, hits),
+            Variant::Medium => medium_clock(g, v, d, x, y, w, h, hits),
+            _ => clock(g, v, d, x, y, w, h, hits),
+        },
+        Widget::Claude | Widget::Codex | Widget::Antigravity | Widget::Cursor => {
+            match v.s.variant(widget) {
+                Variant::Medium | Variant::Small => ai_compact(g, v, d, widget, x, y, w, h, hits),
+                _ => ai(g, v, d, ai_panel(widget), x, y, w, h, hits),
+            }
+        }
+        Widget::Controls => controls(g, v, d, x, y, w, h, hits),
+        Widget::Lang => lang(g, v, d, x, y, w, h, hits),
+        Widget::Tray => tray(g, v, x, y, w, h, hits),
+        Widget::Desktop => desktop(g, v, x, y, w, h, hits),
+        Widget::System => system(g, v, d, x, y, w, h, hits),
+        Widget::Battery => battery(g, v, d, x, y, w, h),
+        Widget::Mic => mic(g, v, d, x, y, w, h, hits),
+        Widget::Network => network(g, v, d, x, y, w, h, hits),
+        Widget::Theme => theme_toggle(g, v, d, x, y, w, h, hits),
+        Widget::Progress => progress(g, v, d, x, y, w, h, hits),
+        Widget::DeepSeek => deepseek(g, v, d, x, y, w, h, hits),
+        Widget::Gmail => gmail(g, v, d, x, y, w, h, hits),
+        Widget::Notifications => notifications(g, v, x, y, w, h, hits),
+    }
 }
 
 /// The name over the hovered control, on the side away from the screen edge, kept over the bar.
@@ -2474,4 +2485,145 @@ fn media_mini(
     g.arc(cx, cy, r, 1.0, v.th.chip, 2.6 * k);
     g.arc(cx, cy, r, track_progress(d), v.th.text, 2.6 * k);
     play_button(g, v, d, cx, cy, 12.0 * k, hits);
+}
+
+/// `a`, then `b`: Direct2D's matrices act on row vectors.
+fn then(a: Matrix3x2, b: Matrix3x2) -> Matrix3x2 {
+    Matrix3x2 {
+        M11: a.M11 * b.M11 + a.M12 * b.M21,
+        M12: a.M11 * b.M12 + a.M12 * b.M22,
+        M21: a.M21 * b.M11 + a.M22 * b.M21,
+        M22: a.M21 * b.M12 + a.M22 * b.M22,
+        M31: a.M31 * b.M11 + a.M32 * b.M21 + b.M31,
+        M32: a.M31 * b.M12 + a.M32 * b.M22 + b.M32,
+    }
+}
+
+/// What the widget picker draws with: the live time, weather and track where there are some,
+/// made-up numbers for the rest, so every tile has something to show.
+fn sample(live: &Data) -> Data {
+    use crate::limits::{Balance, Window};
+    let limits = |a: f32, b: f32, w: [Window; 2]| {
+        let now = live.now;
+        Some(vec![
+            Limit {
+                window: w[0],
+                pct: a,
+                resets: Some(now + 2 * 3600 + 13 * 60),
+            },
+            Limit {
+                window: w[1],
+                pct: b,
+                resets: Some(now + 4 * 86400 + 10 * 3600),
+            },
+        ])
+    };
+    let media = live.media.clone().or_else(|| {
+        Some(crate::controls::Media {
+            title: "Afterglow".into(),
+            artist: "Lumen".into(),
+            playing: true,
+            position: 84.0,
+            length: 214.0,
+            ..Default::default()
+        })
+    });
+    Data {
+        cpu: 0.23,
+        mem: 0.61,
+        battery: Some((0.8, false)),
+        media,
+        weather: live.weather.clone(),
+        weather_w: live.weather_w.max(90.0),
+        claude: limits(34.0, 58.0, [Window::Session, Window::Weekly]),
+        codex: limits(12.0, 40.0, [Window::Session, Window::Weekly]),
+        antigravity: limits(5.0, 0.0, [Window::Weekly, Window::OtherWeekly]),
+        cursor: limits(4.0, 4.0, [Window::Included, Window::Auto]),
+        deepseek: Some(vec![Balance {
+            currency: "USD".into(),
+            total: 12.4,
+        }]),
+        gmail: Some(Ok(11)),
+        google: true,
+        volume: Some(crate::controls::Volume {
+            level: 0.6,
+            muted: false,
+            name: "Speakers".into(),
+        }),
+        mic: Some(false),
+        net: Some((2_400_000.0, 180_000.0)),
+        light: live.light,
+        wifi: Some(true),
+        bluetooth: Some(true),
+        vpn: Some(false),
+        airplane: Some(false),
+        hotspot: Some(false),
+        lang: Some(("ENG".into(), "US".into())),
+        now: live.now,
+        time: live.time,
+        ..Default::default()
+    }
+}
+
+/// A tile as the widget picker shows it: on a strip of the bar's own colours, shrunk to fit
+/// the box when it's wider, with sample numbers where the real ones aren't in yet.
+pub fn preview(g: &Gfx, s: &Settings, live: &Data, widget: Widget, x: f32, y: f32, w: f32, h: f32) {
+    let th = theme(s.style);
+    let base = if th.dark { 0x23242B } else { 0xE6E7EC };
+    g.fill_rr(x, y, w, h, 12.0, rgba(base, 1.0));
+    if let Some(tint) = th.bar {
+        g.fill_rr(x, y, w, h, 12.0, tint);
+    }
+    let d = sample(live);
+    let m = metrics(Size::M);
+    let v = View {
+        s,
+        th,
+        m,
+        accent: accent(s),
+        hover: None,
+        mag: &[],
+        intro: 1e3,
+        slide: &[],
+        lifted: None,
+        bar_x: 0.0,
+        bar_y: 0.0,
+        tip: None,
+    };
+    let th_ = m.h - 2.0 * m.pad;
+    let tw = match widget {
+        Widget::Apps => 3.0 * icon_step(&m) + 2.0 * ICON_LEAD * m.k,
+        _ => tile_w(widget, &d, &v).unwrap_or(56.0),
+    };
+    let k = ((w - 16.0) / tw).min((h - 10.0) / th_).min(1.0);
+    // the tile's own box, centred in the strip and scaled about the strip's centre
+    let (tx, ty) = (x + (w - tw) / 2.0, y + (h - th_) / 2.0);
+    let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+    let outer = g.transform();
+    let local = Matrix3x2 {
+        M11: k,
+        M12: 0.0,
+        M21: 0.0,
+        M22: k,
+        M31: cx * (1.0 - k),
+        M32: cy * (1.0 - k),
+    };
+    g.set_transform(then(local, outer));
+    if widget == Widget::Apps {
+        // no app icons in this window: three placeholders where they'd go
+        for i in 0..3 {
+            let ix = tx + ICON_LEAD * m.k + i as f32 * icon_step(&m);
+            g.fill_rr(
+                ix,
+                ty + (th_ - m.icon) / 2.0,
+                m.icon,
+                m.icon,
+                9.0,
+                v.th.chip,
+            );
+        }
+    } else {
+        draw_tile(g, &v, &d, widget, tx, ty, tw, th_, &mut vec![]);
+    }
+    g.set_transform(outer);
 }

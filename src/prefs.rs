@@ -33,7 +33,9 @@ pub enum Act {
     Remove(usize),
     Add(usize), // a group's +: pick a hidden widget to show there
     Drag(usize),
-    Variant(usize), // a widget row's look: pick another from a menu
+    Variant(usize),   // a widget row's look: pick another from a menu
+    AddWidget(usize), // a card in the widget picker: show that row's widget
+    ClosePicker,
     Control(Control),
     Focus(Field),
     Pick(usize),
@@ -77,6 +79,9 @@ pub struct State {
     drag: Option<RowDrag>,
     pub places: Vec<crate::weather::Place>, // suggestions under the city field
     pub over: Option<Act>,                  // the control under the cursor
+    /// The widget picker, open over the Widgets page for the group whose + was pressed.
+    pub picker: Option<usize>,
+    pub picker_scroll: f32, // DIPs the picker's grid is scrolled down
 }
 
 /// A widget row held by its grip. `moved` turns a press into a drag after a few pixels.
@@ -177,6 +182,8 @@ impl State {
             drag: None,
             places: vec![],
             over: None,
+            picker: None,
+            picker_scroll: 0.0,
         }
     }
 
@@ -297,6 +304,18 @@ impl State {
         self.focus = None;
         self.places.clear();
         Some(p)
+    }
+
+    /// Opens the widget picker for `group`, scrolled to the top.
+    pub fn open_picker(&mut self, group: usize) {
+        (self.picker, self.picker_scroll) = (Some(group), 0.0);
+    }
+
+    /// Scrolls the picker by `dy` DIPs, as far as its cards go in a window `h` tall.
+    pub fn scroll_picker(&mut self, dy: f32, h: f32) {
+        let cards = self.rows.iter().filter(|r| !r.on).count();
+        let max = (PICK_TOP + cards.div_ceil(3) as f32 * PICK_STEP - (h - PICK_BOTTOM)).max(0.0);
+        self.picker_scroll = (self.picker_scroll + dy).clamp(0.0, max);
     }
 
     pub fn remove(&mut self, row: usize) {
@@ -501,7 +520,15 @@ impl Ctx<'_> {
     }
 }
 
-pub fn draw(g: &Gfx, st: &State, s: &Settings, flags: Flags, w: f32, h: f32) -> Vec<Hit> {
+pub fn draw(
+    g: &Gfx,
+    st: &State,
+    s: &Settings,
+    d: &ui::Data,
+    flags: Flags,
+    w: f32,
+    h: f32,
+) -> Vec<Hit> {
     let (dark, accent) = (ui::theme(s.style).dark, ui::accent(s));
     let mut hits = vec![];
     let mut c = Ctx {
@@ -608,7 +635,10 @@ pub fn draw(g: &Gfx, st: &State, s: &Settings, flags: Flags, w: f32, h: f32) -> 
     match st.tab {
         Tab::Appearance => appearance(g, &mut c, s, x, cw),
         Tab::Dock => dock(g, &mut c, s, &flags, x, cw),
-        Tab::Widgets => widgets(g, &mut c, st, s, x, cw),
+        Tab::Widgets => match st.picker {
+            Some(group) => picker(g, &mut c, st, s, d, group, x, cw, h),
+            None => widgets(g, &mut c, st, s, x, cw),
+        },
         Tab::Feeds => feeds(g, &mut c, st, s, &flags, x, cw),
     }
     hits
@@ -755,6 +785,107 @@ fn dock(g: &Gfx, c: &mut Ctx, s: &Settings, flags: &Flags, x0: f32, cw: f32) {
         ("While you're away, so the bar restarts unnoticed", 462.0),
     ] {
         g.text(t, x0, y, cw, 18.0, 10.5, 400, c.p.sub, Align::Left);
+    }
+}
+
+// The widget picker's grid: where it starts and stops, and one card plus the gap below it.
+const PICK_TOP: f32 = 112.0;
+const PICK_BOTTOM: f32 = 20.0;
+const PICK_CARD: f32 = 116.0;
+const PICK_STEP: f32 = PICK_CARD + 12.0;
+
+/// Every widget not on the bar yet, as cards with a preview of the tile in a 3-column grid.
+/// Clicking one adds it to `group`.
+fn picker(
+    g: &Gfx,
+    c: &mut Ctx,
+    st: &State,
+    s: &Settings,
+    d: &ui::Data,
+    group: usize,
+    x0: f32,
+    cw: f32,
+    h: f32,
+) {
+    c.title(g, "Add a widget", x0, 72.0);
+    let to = [
+        "To the left of the bar",
+        "To the middle of the bar",
+        "To the right of the bar",
+    ];
+    g.text(
+        to[group.min(2)],
+        x0 + 130.0,
+        72.0,
+        cw - 230.0,
+        24.0,
+        11.5,
+        500,
+        c.p.sub,
+        Align::Left,
+    );
+    let (bx, bw) = (x0 + cw - 84.0, 84.0);
+    c.hover(g, Act::ClosePicker, bx, 68.0, bw, 30.0, 9.0);
+    g.text(
+        "Cancel",
+        bx,
+        68.0,
+        bw,
+        30.0,
+        12.0,
+        600,
+        c.link,
+        Align::Center,
+    );
+    c.hits.push((bx, 68.0, bw, 30.0, Act::ClosePicker));
+
+    let hidden: Vec<usize> = (0..st.rows.len()).filter(|&i| !st.rows[i].on).collect();
+    let (top, bottom) = (PICK_TOP, h - PICK_BOTTOM);
+    let card_w = (cw - 24.0) / 3.0;
+    g.clip(x0 - 4.0, top - 4.0, cw + 8.0, bottom - top + 4.0);
+    for (n, &i) in hidden.iter().enumerate() {
+        let widget = st.rows[i].widget;
+        let x = x0 + (n % 3) as f32 * (card_w + 12.0);
+        let y = top + (n / 3) as f32 * PICK_STEP - st.picker_scroll;
+        if y + PICK_CARD < top || y > bottom {
+            continue;
+        }
+        let act = Act::AddWidget(i);
+        g.fill_rr(x, y, card_w, PICK_CARD, 14.0, c.p.card);
+        if c.over == Some(act) {
+            g.stroke_rr(x, y, card_w, PICK_CARD, 14.0, c.accent, 2.0);
+        }
+        ui::preview(g, s, d, widget, x + 8.0, y + 8.0, card_w - 16.0, 62.0);
+        g.text(
+            widget.label(),
+            x + 12.0,
+            y + 76.0,
+            card_w - 24.0,
+            18.0,
+            12.0,
+            700,
+            c.p.text,
+            Align::Left,
+        );
+        g.text(
+            widget.blurb(),
+            x + 12.0,
+            y + 94.0,
+            card_w - 24.0,
+            16.0,
+            10.5,
+            400,
+            c.p.sub,
+            Align::Left,
+        );
+        // only the part that shows takes clicks
+        let (hy, hb) = (y.max(top), (y + PICK_CARD).min(bottom));
+        c.hits.push((x, hy, card_w, hb - hy, act));
+    }
+    g.unclip();
+    if hidden.is_empty() {
+        let msg = "Every widget is on the bar already";
+        g.text(msg, x0, top, cw, 40.0, 12.0, 500, c.p.sub, Align::Left);
     }
 }
 

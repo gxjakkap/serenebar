@@ -265,6 +265,35 @@ impl Widget {
         }
     }
 
+    /// One line on what the tile does, for the widget picker.
+    pub fn blurb(self) -> &'static str {
+        match self {
+            Widget::Weather => "Conditions and temperature",
+            Widget::Media => "What's playing, with controls",
+            Widget::System => "CPU and memory in use",
+            Widget::Start => "Opens the Start menu",
+            Widget::Apps => "Pinned and open apps",
+            Widget::Claude => "Claude plan limits",
+            Widget::Codex => "Codex plan limits",
+            Widget::Antigravity => "Gemini plan limits",
+            Widget::Cursor => "Cursor plan usage",
+            Widget::DeepSeek => "DeepSeek API balance",
+            Widget::Gmail => "Unread mail in your inbox",
+            Widget::Controls => "Wi-Fi, volume and more",
+            Widget::Battery => "Charge and charging",
+            Widget::Tray => "The notification-area icons",
+            Widget::Lang => "The keyboard layout",
+            Widget::Desktop => "Hides or brings back windows",
+            Widget::Notifications => "Opens the notification centre",
+            Widget::Clock => "The time and date",
+            Widget::Date => "Today's date",
+            Widget::Mic => "Mute the mic and the speakers",
+            Widget::Network => "Download and upload speed",
+            Widget::Theme => "Switches light and dark mode",
+            Widget::Progress => "Day, month and year gone",
+        }
+    }
+
     /// The group a tile joins when it is switched on: 0 left, 1 centre, 2 right (of `GROUPS`).
     pub fn home_group(self) -> usize {
         match self {
