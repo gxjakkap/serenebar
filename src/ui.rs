@@ -137,7 +137,7 @@ pub fn tip(act: Action, d: &Data) -> Option<String> {
     let playing = d.media.as_ref().is_some_and(|m| m.playing);
     Some(match act {
         Action::Start => "Start".into(),
-        Action::Open(Panel::Tray) => "Hidden icons".into(),
+        Action::Open(Panel::Tray) => "Tray icons".into(),
         Action::ShowDesktop => "Show desktop".into(),
         Action::Notifications => "Notifications".into(),
         Action::Wifi => radio("Wi-Fi"),

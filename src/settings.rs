@@ -248,7 +248,7 @@ impl Widget {
             Widget::Codex => "Codex limits",
             Widget::Controls => "Quick controls",
             Widget::Battery => "Battery",
-            Widget::Tray => "Hidden icons",
+            Widget::Tray => "Tray icons",
             Widget::Lang => "Input language",
             Widget::Desktop => "Show desktop",
             Widget::Clock => "Clock",

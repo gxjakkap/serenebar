@@ -1094,7 +1094,7 @@ fn about(
 /// Notification-area icons in a grid. The name of the one under the cursor shows at the bottom.
 fn tray(g: &Gfx, p: &Pal, st: &State, d: &Data, w: f32, h: f32, hits: &mut Vec<Hit>) {
     g.text(
-        "Hidden icons",
+        "Tray icons",
         20.0,
         16.0,
         w - 70.0,
