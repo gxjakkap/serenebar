@@ -3,7 +3,10 @@ use crate::dates::LocalTime;
 use crate::dock::MAG;
 use crate::gfx::{rgba, Align, Gfx, C};
 use crate::limits::{Limit, Window};
-use crate::settings::{Control, Settings, Size, Slot, Style, Widget, ACCENTS, GROUPS};
+use crate::settings::{
+    dark_text_on, Control, Settings, Size, Slot, Style, Widget, ACCENTS, ACCENT_TEXT, DANGER_TEXT,
+    GROUPS,
+};
 use crate::tray::TrayIcon;
 use crate::weather::Weather;
 use std::f32::consts::PI;
@@ -37,7 +40,7 @@ pub fn theme(s: Style) -> Theme {
     };
     let light = |bar: Option<C>, text: u32, sub: u32| Theme {
         text: rgba(text, 1.0),
-        sub: rgba(sub, 0.62),
+        sub: rgba(sub, 0.78), // 4.7:1 or better on the light bars
         tile: b(0.035),
         tile_hover: b(0.07),
         tile_border: b(0.07),
@@ -120,6 +123,34 @@ pub fn head(m: &Metrics) -> f32 {
     (MAG - 1.0) * m.icon + 6.0 * m.k
 }
 
+/// Room beyond the magnified icons for the name over the hovered one. DIPs at scale 1.
+pub const TIP_ROOM: f32 = 16.0;
+
+/// What the name over a hovered control says, for the controls that are only a glyph.
+/// App names come from the shell, so the caller looks those up.
+pub fn tip(act: Action, d: &Data) -> Option<String> {
+    let radio = |name: &str| match d.radio(act) {
+        Some(true) => format!("{name} on"),
+        Some(false) => format!("{name} off"),
+        None => name.to_string(),
+    };
+    let playing = d.media.as_ref().is_some_and(|m| m.playing);
+    Some(match act {
+        Action::Start => "Start".into(),
+        Action::Open(Panel::Tray) => "Hidden icons".into(),
+        Action::ShowDesktop => "Show desktop".into(),
+        Action::Wifi => radio("Wi-Fi"),
+        Action::Bluetooth => radio("Bluetooth"),
+        Action::Vpn => radio("VPN"),
+        Action::Prev => "Previous".into(),
+        Action::Toggle if playing => "Pause".into(),
+        Action::Toggle => "Play".into(),
+        Action::Next => "Next".into(),
+        Action::TaskManager => "Task Manager".into(),
+        _ => return None,
+    })
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Panel {
     Weather,
@@ -191,10 +222,37 @@ pub struct View<'a> {
     pub lifted: Option<usize>, // app being dragged, drawn above the rest
     pub bar_x: f32, // where the bar sits inside the window. The magnification room is beside it.
     pub bar_y: f32,
+    pub tip: Option<String>, // the name shown over the hovered control
 }
 
 pub fn accent(s: &Settings) -> C {
     rgba(ACCENTS[s.accent].0, 1.0)
+}
+
+/// The accent as text on the panels and the settings window.
+pub fn accent_text(s: &Settings, dark: bool) -> C {
+    let (l, d) = ACCENT_TEXT[s.accent];
+    rgba(if dark { d } else { l }, 1.0)
+}
+
+/// Red text for actions like Quit.
+pub fn danger_text(dark: bool) -> C {
+    rgba(if dark { DANGER_TEXT.1 } else { DANGER_TEXT.0 }, 1.0)
+}
+
+/// Text and glyphs on a fill of `c`: white, or near-black on the light accents.
+pub fn on_fill(c: C) -> C {
+    let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+    let dark = dark_text_on(b(c.r) << 16 | b(c.g) << 8 | b(c.b));
+    rgba(if dark { 0x1D1D1F } else { 0xFFFFFF }, 1.0)
+}
+
+/// Smallest text on the bar, whatever the size setting.
+const MIN_TEXT: f32 = 10.0;
+
+/// Bar text: `base` DIPs scaled with the dock, never below `MIN_TEXT`.
+pub fn font(k: f32, base: f32) -> f32 {
+    (base * k).max(MIN_TEXT)
 }
 
 /// A clickable box and what clicking it does.
@@ -221,8 +279,24 @@ pub struct Pal {
     pub border: C,
 }
 
+/// The faint fill under a control the cursor is over.
+pub fn wash(p: &Pal) -> C {
+    C { a: 0.08, ..p.text }
+}
+
 /// The ✕ in a card's top right corner.
-pub fn close_button<A>(g: &Gfx, p: &Pal, cx: f32, cy: f32, act: A, hits: &mut Vec<Hit<A>>) {
+pub fn close_button<A>(
+    g: &Gfx,
+    p: &Pal,
+    cx: f32,
+    cy: f32,
+    act: A,
+    hovered: bool,
+    hits: &mut Vec<Hit<A>>,
+) {
+    if hovered {
+        g.fill_circle(cx, cy, 15.0, wash(p));
+    }
     g.line(cx - 6.0, cy - 6.0, cx + 6.0, cy + 6.0, p.sub, 1.8);
     g.line(cx + 6.0, cy - 6.0, cx - 6.0, cy + 6.0, p.sub, 1.8);
     hits.push((cx - 16.0, cy - 16.0, 32.0, 32.0, act));
@@ -242,7 +316,7 @@ pub fn pal(dark: bool) -> Pal {
             bg: rgba(0xF2F2F7, 0.98),
             card: rgba(0xFFFFFF, 1.0),
             text: rgba(0x1D1D1F, 1.0),
-            sub: rgba(0x3C3C43, 0.6),
+            sub: rgba(0x3C3C43, 0.78), // 5.3:1 on bg, 5.6:1 on card
             border: rgba(0x000000, 0.08),
         }
     }
@@ -257,7 +331,7 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
         Widget::Media => 196.0 * k,
         Widget::Weather => (WEATHER_PAD + d.weather_w).max(150.0) * k,
         Widget::Clock => 100.0 * k,
-        Widget::DateClock => 52.0 * k,
+        Widget::DateClock => 56.0 * k,
         Widget::Claude if d.claude.is_some() => 196.0 * k,
         Widget::Codex if d.codex.is_some() => 196.0 * k,
         Widget::Controls => {
@@ -270,7 +344,7 @@ fn tile_w(w: Widget, d: &Data, v: &View) -> Option<f32> {
         Widget::Lang if d.lang.is_some() => 46.0 * k,
         Widget::Tray | Widget::Desktop => 24.0 * k,
         Widget::System => 96.0 * k,
-        Widget::Battery if d.battery.is_some() => 48.0 * k,
+        Widget::Battery if d.battery.is_some() => 56.0 * k,
         Widget::Apps | Widget::Claude | Widget::Codex | Widget::Lang | Widget::Battery => {
             return None
         }
@@ -503,8 +577,32 @@ pub fn draw_tiles(g: &Gfx, v: &View, d: &Data, full_w: Option<f32>) -> Vec<Hit<A
             }
         }
     }
+    g.set_transform(about(1.0, 0.0, 0.0, v));
+    draw_tip(g, v, &hits, full_w.unwrap_or_else(|| content_width(d, v)));
     g.set_transform(Matrix3x2::identity());
     hits
+}
+
+/// The name over the hovered control, on the side away from the screen edge, kept over the bar.
+fn draw_tip(g: &Gfx, v: &View, hits: &[Hit<Action>], bar_w: f32) {
+    let (Some(text), Some(act)) = (&v.tip, v.hover) else {
+        return;
+    };
+    let Some(&(hx, hy, hw, hh, _)) = hits.iter().find(|h| h.4 == act) else {
+        return;
+    };
+    let (k, p) = (v.m.k, pal(v.th.dark));
+    let f = font(k, 12.0);
+    let (tw, th) = (g.measure(text, f, 600) + 20.0 * k, 24.0 * k);
+    let tx = (hx + hw / 2.0 - tw / 2.0).clamp(0.0, (bar_w - tw).max(0.0));
+    let ty = if v.s.top {
+        hy + hh + 6.0 * k
+    } else {
+        hy - 6.0 * k - th
+    };
+    g.fill_rr(tx, ty, tw, th, th / 2.0, p.bg);
+    g.stroke_rr(tx, ty, tw, th, th / 2.0, p.border, 1.0);
+    g.text(text, tx, ty, tw, th, f, 600, p.text, Align::Center);
 }
 
 fn tile(g: &Gfx, v: &View, x: f32, y: f32, w: f32, h: f32, hovered: bool) {
@@ -568,7 +666,7 @@ fn media(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut
     let (line, playing) = match &d.media {
         Some(m) if !m.artist.is_empty() => (format!("{} · {}", m.title, m.artist), m.playing),
         Some(m) => (m.title.clone(), m.playing),
-        None => ("Not playing".to_string(), false),
+        None => ("Nothing playing".to_string(), false),
     };
     g.text(
         &line,
@@ -576,7 +674,7 @@ fn media(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut
         y + 5.0 * k,
         w - 20.0 * k,
         15.0 * k,
-        10.5 * k,
+        font(k, 11.0),
         600,
         white(0.95),
         Align::Center,
@@ -634,7 +732,7 @@ fn weather(
         let msg = if has_city {
             "Loading weather…"
         } else {
-            "Set a city for weather"
+            "Add a city in Settings"
         };
         g.text(
             msg,
@@ -642,7 +740,7 @@ fn weather(
             y,
             w - 16.0 * k,
             h,
-            9.5 * k,
+            font(k, 10.0),
             500,
             v.th.sub,
             Align::Center,
@@ -651,7 +749,7 @@ fn weather(
         return;
     };
     let (top, bottom) = if wx.day {
-        (0x5AA9F0, 0x2F72D6)
+        (0x1375CE, 0x245FB7) // white is 4.7:1 on the lighter top
     } else {
         (0x2B3A67, 0x141B33)
     };
@@ -667,16 +765,16 @@ fn weather(
     g.stroke_rr(x, y, w, h, r, white(0.14), 1.0);
     let (label, icon) = crate::weather::wmo(wx.code, wx.day);
     let temp = format!("{:.0}°", wx.temp);
-    let tw = g.measure(&temp, 21.0 * k, 300);
+    let tw = g.measure(&temp, font(k, 21.0), 300);
     let tx = x + w - 36.0 * k - tw;
     let lw = tx - 8.0 * k - (x + 10.0 * k);
     g.text(
         label,
         x + 10.0 * k,
-        y + 7.0 * k,
+        y + 6.0 * k,
         lw,
         15.0 * k,
-        10.5 * k,
+        font(k, 11.0),
         600,
         white(1.0),
         Align::Left,
@@ -684,12 +782,12 @@ fn weather(
     g.text(
         &wx.city,
         x + 10.0 * k,
-        y + 22.0 * k,
+        y + 21.0 * k,
         lw,
-        13.0 * k,
-        9.0 * k,
+        15.0 * k,
+        font(k, 10.0),
         500,
-        white(0.8),
+        white(1.0),
         Align::Left,
     );
     g.text(
@@ -698,7 +796,7 @@ fn weather(
         y,
         tw + 1.0,
         h,
-        21.0 * k,
+        font(k, 21.0),
         300,
         white(1.0),
         Align::Left,
@@ -739,7 +837,7 @@ fn clock(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut
     } else {
         "PM"
     };
-    let (big, small) = (17.0 * k, 8.5 * k);
+    let (big, small) = (font(k, 17.0), font(k, 10.0));
     let (wb, ws) = (g.measure(&hm, big, 600), g.measure(&secs, small, 500));
     let wa = if ampm.is_empty() {
         0.0
@@ -783,8 +881,8 @@ fn clock(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut
         x,
         y + h - 18.0 * k,
         w,
-        13.0 * k,
-        9.0 * k,
+        15.0 * k,
+        font(k, 10.0),
         500,
         v.th.sub,
         Align::Center,
@@ -824,51 +922,29 @@ fn dateclock(
         y + 1.0 * k,
         w,
         split,
-        15.0 * k,
+        font(k, 15.0),
         500,
         rgba(0x2A0E02, 0.92),
         Align::Center,
     );
+    // weekday and day on one line: at 10 DIPs there's no room to stack them
     let (by, bh) = (y + split, h - split);
+    let wd = crate::dates::day_name(crate::dates::weekday(t.days()));
+    let day = t.day.to_string();
+    let (fw, fd) = (font(k, 10.0), font(k, 12.0));
+    let (ww, dw, sp) = (g.measure(wd, fw, 500), g.measure(&day, fd, 600), 3.0 * k);
+    let x0 = x + (w - ww - sp - dw) / 2.0;
+    g.text(wd, x0, by, ww + 1.0, bh, fw, 500, white(0.75), Align::Left);
     g.text(
-        crate::dates::day_name(crate::dates::weekday(t.days())),
-        x + 5.0 * k,
-        by + 1.0 * k,
-        w * 0.5,
-        bh * 0.38,
-        7.0 * k,
-        500,
-        white(0.75),
-        Align::Left,
-    );
-    g.text(
-        &t.day.to_string(),
-        x + 5.0 * k,
-        by + bh * 0.32,
-        w * 0.5,
-        bh * 0.62,
-        12.0 * k,
+        &day,
+        x0 + ww + sp,
+        by,
+        dw + 1.0,
+        bh,
+        fd,
         600,
         white(1.0),
         Align::Left,
-    );
-    let cr = bh / 2.0 - 2.5 * k;
-    let (cx, cy) = (x + w - cr - 4.0 * k, by + bh / 2.0);
-    g.fill_circle(cx, cy, cr, rgba(0xC9C9CE, 1.0));
-    let badge = match &d.weather {
-        Some(wx) => format!("{:.0}°", wx.temp),
-        None => crate::dates::month_abbr(t.month).to_string(),
-    };
-    g.text(
-        &badge,
-        cx - cr,
-        cy - cr,
-        cr * 2.0,
-        cr * 2.0,
-        7.5 * k,
-        500,
-        rgba(0x222222, 1.0),
-        Align::Center,
     );
     hits.push((x, y, w, h, Action::Open(Panel::Calendar)));
 }
@@ -931,28 +1007,44 @@ fn ai(
     let act = Action::Open(which);
     tile(g, v, x, y, w, h, v.hover == Some(act));
     ai_logo(g, which, x + 6.0 * k, y + (h - 30.0 * k) / 2.0, 30.0 * k);
+    // columns fit their widest text, so the 10 DIP floor never cuts a label short
+    let rows = [Window::Session, Window::Weekly];
+    let f = font(k, 10.0);
+    let label_w = rows
+        .iter()
+        .map(|r| g.measure(r.label(), f, 600))
+        .fold(0.0, f32::max)
+        + 4.0 * k;
+    let (pct_w, reset_w, sp) = (
+        g.measure("100%", f, 600),
+        g.measure("23h 59m", f, 500),
+        4.0 * k,
+    );
     let lx = x + 42.0 * k;
-    for (row, window) in [Window::Session, Window::Weekly].into_iter().enumerate() {
+    let pct_x = x + w - 6.0 * k - pct_w;
+    let reset_x = pct_x - sp - reset_w;
+    let (bx, bw) = (lx + label_w, (reset_x - sp - lx - label_w).max(0.0));
+    for (row, window) in rows.into_iter().enumerate() {
         let Some(l) = limits.iter().find(|l| l.window == window) else {
             continue;
         };
-        let ry = y + 7.0 * k + row as f32 * 17.0 * k;
+        let (ry, rh) = (y + 6.0 * k + row as f32 * 18.0 * k, 16.0 * k);
         g.text(
             window.label(),
             lx,
             ry,
-            40.0 * k,
-            12.0 * k,
-            8.5 * k,
+            label_w,
+            rh,
+            f,
             600,
             v.th.text,
             Align::Left,
         );
-        let (bx, bw) = (lx + 40.0 * k, w - (lx - x) - 40.0 * k - 66.0 * k);
-        g.fill_rr(bx, ry + 4.5 * k, bw, 3.0 * k, 1.5 * k, v.th.chip);
+        let by = ry + rh / 2.0 - 1.5 * k;
+        g.fill_rr(bx, by, bw, 3.0 * k, 1.5 * k, v.th.chip);
         g.fill_rr(
             bx,
-            ry + 4.5 * k,
+            by,
             bw * (l.pct / 100.0).clamp(0.0, 1.0),
             3.0 * k,
             1.5 * k,
@@ -961,11 +1053,11 @@ fn ai(
         if let Some(r) = l.resets {
             g.text(
                 &crate::dates::fmt_left(r - now),
-                bx + bw + 3.0 * k,
+                reset_x,
                 ry,
-                36.0 * k,
-                12.0 * k,
-                7.5 * k,
+                reset_w + 1.0,
+                rh,
+                f,
                 500,
                 v.th.sub,
                 Align::Left,
@@ -973,14 +1065,14 @@ fn ai(
         }
         g.text(
             &format!("{:.0}%", l.pct),
-            x + w - 30.0 * k,
+            pct_x,
             ry,
-            24.0 * k,
-            12.0 * k,
-            8.5 * k,
+            pct_w + 1.0,
+            rh,
+            f,
             600,
             v.th.text,
-            Align::Left,
+            Align::Right,
         );
     }
     hits.push((x, y, w, h, act));
@@ -1168,7 +1260,7 @@ fn lang(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut 
         y + 7.0 * k,
         w,
         18.0 * k,
-        12.0 * k,
+        font(k, 12.0),
         700,
         v.th.text,
         Align::Center,
@@ -1178,8 +1270,8 @@ fn lang(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32, hits: &mut 
         x,
         y + 24.0 * k,
         w,
-        14.0 * k,
-        8.5 * k,
+        15.0 * k,
+        font(k, 10.0),
         500,
         v.th.sub,
         Align::Center,
@@ -1249,7 +1341,7 @@ fn controls(
                 }
                 g.fill_circle(cx, cy, br, bg);
                 let fg = dim(
-                    if lit { white(1.0) } else { v.th.text },
+                    if lit { on_fill(v.accent) } else { v.th.text },
                     if on.is_some() { 1.0 } else { 0.35 },
                 );
                 radio_glyph(g, act, cx, cy, 9.0 * k, fg);
@@ -1263,10 +1355,10 @@ fn controls(
                 g.text(
                     name,
                     vx,
-                    y + 6.0 * k,
-                    vw - 30.0 * k,
-                    13.0 * k,
-                    8.5 * k,
+                    y + 5.0 * k,
+                    vw - 42.0 * k,
+                    15.0 * k,
+                    font(k, 10.0),
                     500,
                     v.th.sub,
                     Align::Left,
@@ -1278,11 +1370,11 @@ fn controls(
                 };
                 g.text(
                     &pct,
-                    vx + vw - 34.0 * k,
-                    y + 6.0 * k,
-                    34.0 * k,
-                    13.0 * k,
-                    8.5 * k,
+                    vx + vw - 40.0 * k,
+                    y + 5.0 * k,
+                    40.0 * k,
+                    15.0 * k,
+                    font(k, 10.0),
                     600,
                     v.th.text,
                     Align::Right,
@@ -1297,33 +1389,28 @@ fn controls(
                     2.5 * k,
                     if muted { v.th.sub } else { v.accent },
                 );
-                hits.push((vx, by - 6.0 * k, vw, 17.0 * k, Action::Volume));
+                let hh = (17.0 * k).max(20.0);
+                hits.push((vx, by + 2.5 * k - hh / 2.0, vw, hh, Action::Volume));
             }
             Control::Battery => {
                 if let Some((f, charging)) = d.battery {
                     let s = 30.0 * k;
                     let bx = cur + 4.0 * k;
-                    g.fill_rr(
-                        bx,
-                        cy - s / 2.0,
-                        s,
-                        s,
-                        9.0 * k,
-                        if charging {
-                            rgba(0x30D158, 1.0)
-                        } else {
-                            v.accent
-                        },
-                    );
+                    let bg = if charging {
+                        rgba(0x30D158, 1.0)
+                    } else {
+                        v.accent
+                    };
+                    g.fill_rr(bx, cy - s / 2.0, s, s, 9.0 * k, bg);
                     g.text(
                         &format!("{:.0}", f * 100.0),
                         bx,
                         cy - s / 2.0,
                         s,
                         s,
-                        11.0 * k,
+                        font(k, 12.0),
                         700,
-                        white(1.0),
+                        on_fill(bg),
                         Align::Center,
                     );
                 }
@@ -1453,7 +1540,7 @@ fn icon(g: &Gfx, v: &View, d: &Data, j: usize, ix: f32, iy: f32, m: f32, y: f32,
         g.fill_circle(ix + s / 2.0, y + h - 1.5 * k, 2.0 * k, v.accent);
     }
     if a.badge > 0 {
-        let r = 6.5 * k * m.sqrt();
+        let r = (6.5 * k * m.sqrt()).max(7.5);
         let (bx, by) = (ix + s - 2.0 * k * m, iy + 2.0 * k * m);
         g.fill_circle(bx, by, r, rgba(0xFF3B30, 1.0));
         let n = if a.badge > 99 {
@@ -1467,7 +1554,7 @@ fn icon(g: &Gfx, v: &View, d: &Data, j: usize, ix: f32, iy: f32, m: f32, y: f32,
             by - r,
             r * 3.0,
             r * 2.0,
-            8.0 * k * m.sqrt(),
+            font(k * m.sqrt(), 8.0),
             700,
             white(1.0),
             Align::Center,
@@ -1475,40 +1562,34 @@ fn icon(g: &Gfx, v: &View, d: &Data, j: usize, ix: f32, iy: f32, m: f32, y: f32,
     }
 }
 
-fn ring(
-    g: &Gfx,
-    v: &View,
-    cx: f32,
-    cy: f32,
-    r: f32,
-    frac: f32,
-    color: C,
-    label: &str,
-    value: &str,
-) {
+/// A progress ring with its value inside and its label under it, in a tile `h` tall at `y`.
+fn ring(g: &Gfx, v: &View, cx: f32, y: f32, h: f32, frac: f32, color: C, label: &str, value: &str) {
     let k = v.m.k;
+    let r = 13.0 * k;
+    let cy = y + 4.0 * k + r;
     g.arc(cx, cy, r, 1.0, dim(v.th.text, 0.12), 3.2 * k);
     g.arc(cx, cy, r, frac, color, 3.2 * k);
     g.text(
-        label,
-        cx - r,
-        cy - r * 0.62,
-        r * 2.0,
-        r * 0.5,
-        6.5 * k,
-        600,
-        v.th.sub,
-        Align::Center,
-    );
-    g.text(
         value,
         cx - r,
-        cy - r * 0.2,
+        cy - r,
         r * 2.0,
-        r * 0.8,
-        11.0 * k,
+        r * 2.0,
+        font(k, 11.0),
         600,
         v.th.text,
+        Align::Center,
+    );
+    let ly = cy + r + 1.5 * k;
+    g.text(
+        label,
+        cx - 28.0 * k,
+        ly,
+        56.0 * k,
+        y + h - ly,
+        font(k, 10.0),
+        500,
+        v.th.sub,
         Align::Center,
     );
 }
@@ -1524,30 +1605,10 @@ fn system(
     hits: &mut Vec<Hit<Action>>,
 ) {
     tile(g, v, x, y, w, h, v.hover == Some(Action::TaskManager));
-    let r = h / 2.0 - 6.0 * v.m.k;
-    let cy = y + h / 2.0;
-    ring(
-        g,
-        v,
-        x + w * 0.28,
-        cy,
-        r,
-        d.cpu,
-        v.accent,
-        "CPU",
-        &format!("{:.0}", d.cpu * 100.0),
-    );
-    ring(
-        g,
-        v,
-        x + w * 0.72,
-        cy,
-        r,
-        d.mem,
-        v.accent,
-        "RAM",
-        &format!("{:.0}", d.mem * 100.0),
-    );
+    for (fx, frac, label) in [(0.28, d.cpu, "CPU"), (0.72, d.mem, "RAM")] {
+        let value = format!("{:.0}", frac * 100.0);
+        ring(g, v, x + w * fx, y, h, frac, v.accent, label, &value);
+    }
     hits.push((x, y, w, h, Action::TaskManager));
 }
 
@@ -1563,16 +1624,7 @@ fn battery(g: &Gfx, v: &View, d: &Data, x: f32, y: f32, w: f32, h: f32) {
     } else {
         0x30D158
     };
-    let label = if charging { "⚡" } else { "BAT" };
-    ring(
-        g,
-        v,
-        x + w / 2.0,
-        y + h / 2.0,
-        h / 2.0 - 6.0 * v.m.k,
-        f,
-        rgba(c, 1.0),
-        label,
-        &format!("{:.0}", f * 100.0),
-    );
+    let label = if charging { "Charging" } else { "Battery" };
+    let value = format!("{:.0}", f * 100.0);
+    ring(g, v, x + w / 2.0, y, h, f, rgba(c, 1.0), label, &value);
 }

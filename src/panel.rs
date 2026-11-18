@@ -7,13 +7,14 @@ use crate::gfx::{rgba, Align, Gfx, C};
 use crate::limits::Limit;
 use crate::settings::Settings;
 use crate::ui::{
-    ai_logo, close_button, limit_color, media_glyph, pal, radio_glyph, speaker_glyph, Action, Data,
-    Pal, Panel,
+    accent_text, ai_logo, close_button, limit_color, media_glyph, on_fill, pal, radio_glyph,
+    speaker_glyph, wash, Action, Data, Pal, Panel,
 };
 
 pub struct State {
     pub kind: Panel,
     pub hover: Option<usize>, // hidden-icons panel: the icon under the cursor
+    pub over: Option<Act>,    // the control under the cursor
     pub month: (i32, u32),
     pub selected: i64, // day shown in the calendar's side list
 }
@@ -36,6 +37,7 @@ impl State {
         State {
             kind,
             hover: None,
+            over: None,
             month: (today.year, today.month),
             selected: today.days(),
         }
@@ -49,6 +51,7 @@ impl State {
             Act::Today => {
                 *self = State {
                     hover: self.hover,
+                    over: self.over,
                     ..State::new(self.kind, today)
                 }
             }
@@ -115,20 +118,30 @@ pub fn size(kind: Panel, d: &Data) -> (f32, f32) {
 }
 
 pub fn draw(g: &Gfx, st: &State, d: &Data, s: &Settings, w: f32, h: f32) -> Vec<Hit> {
-    let (p, accent) = (pal(crate::ui::theme(s.style).dark), crate::ui::accent(s));
+    let dark = crate::ui::theme(s.style).dark;
+    let (p, accent) = (pal(dark), crate::ui::accent(s));
+    let link = accent_text(s, dark); // the accent as text
     g.fill_rr(0.0, 0.0, w, h, 22.0, p.bg);
     g.stroke_rr(0.0, 0.0, w, h, 22.0, p.border, 1.0);
     let mut hits = vec![];
-    close_button(g, &p, w - 30.0, 32.0, Act::Close, &mut hits);
+    let over_close = st.over == Some(Act::Close);
+    close_button(g, &p, w - 30.0, 32.0, Act::Close, over_close, &mut hits);
     match st.kind {
-        Panel::Calendar => calendar(g, &p, st, d, accent, s.clock24, w, h, &mut hits),
+        Panel::Calendar => calendar(g, &p, st, d, accent, link, s.clock24, w, h, &mut hits),
         Panel::Weather => weather(g, &p, d, w),
         Panel::Claude | Panel::Codex => ai(g, &p, st.kind, d, w, h),
-        Panel::Controls => controls(g, &p, d, accent, w, h, &mut hits),
-        Panel::About => about(g, &p, d, accent, w, h, &mut hits),
+        Panel::Controls => controls(g, &p, st, d, accent, link, w, h, &mut hits),
+        Panel::About => about(g, &p, st, d, accent, link, w, h, &mut hits),
         Panel::Tray => tray(g, &p, st, d, w, h, &mut hits),
     }
     hits
+}
+
+/// The wash under the control the cursor is over.
+fn hover(g: &Gfx, p: &Pal, st: &State, act: Act, x: f32, y: f32, w: f32, h: f32, r: f32) {
+    if st.over == Some(act) {
+        g.fill_rr(x, y, w, h, r, wash(p));
+    }
 }
 
 fn calendar(
@@ -137,6 +150,7 @@ fn calendar(
     st: &State,
     d: &Data,
     accent: C,
+    link: C,
     h24: bool,
     w: f32,
     h: f32,
@@ -157,6 +171,7 @@ fn calendar(
     );
 
     // header buttons, left of the close button
+    hover(g, p, st, Act::Today, w - 196.0, 16.0, 60.0, 32.0, 10.0);
     g.text(
         "Today",
         w - 196.0,
@@ -165,7 +180,7 @@ fn calendar(
         32.0,
         14.0,
         600,
-        accent,
+        link,
         Align::Center,
     );
     hits.push((w - 196.0, 16.0, 60.0, 32.0, Act::Today));
@@ -174,6 +189,7 @@ fn calendar(
         (w - 86.0, Act::NextMonth, 1.0),
     ] {
         let (cx, cy) = (x + 14.0, 32.0);
+        hover(g, p, st, act, x, 16.0, 28.0, 32.0, 10.0);
         g.line(cx - 3.0 * flip, cy - 6.0, cx + 3.0 * flip, cy, p.text, 2.0);
         g.line(cx + 3.0 * flip, cy, cx - 3.0 * flip, cy + 6.0, p.text, 2.0);
         hits.push((x, 16.0, 28.0, 32.0, act));
@@ -215,13 +231,14 @@ fn calendar(
             104.0 + (slot / 7) as f32 * (ch + gap),
         );
         g.fill_rr(x, cy, cw, ch, 14.0, p.card);
+        hover(g, p, st, Act::Select(day), x, cy, cw, ch, 14.0);
         if day == today {
             g.stroke_rr(x, cy, cw, ch, 14.0, accent, 2.0);
         } else if day == st.selected {
             g.stroke_rr(x, cy, cw, ch, 14.0, p.sub, 1.5);
         }
         let color = if day == today {
-            accent
+            link
         } else if day < today {
             p.sub
         } else {
@@ -652,7 +669,17 @@ fn ai(g: &Gfx, p: &Pal, kind: Panel, d: &Data, w: f32, h: f32) {
 
 /// Our own quick settings: what's playing, Wi-Fi, Bluetooth, mute, volume and battery,
 /// with a link to Windows' panel for the rest.
-fn controls(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Vec<Hit>) {
+fn controls(
+    g: &Gfx,
+    p: &Pal,
+    st: &State,
+    d: &Data,
+    accent: C,
+    link: C,
+    w: f32,
+    h: f32,
+    hits: &mut Vec<Hit>,
+) {
     let white = rgba(0xFFFFFF, 1.0);
     let (x, cw) = (16.0, w - 32.0);
     g.text(
@@ -702,6 +729,19 @@ fn controls(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Ve
         .enumerate()
     {
         let cx = x + cw / 2.0 + (i as f32 - 1.0) * 56.0;
+        if d.media.is_some() {
+            hover(
+                g,
+                p,
+                st,
+                Act::Do(act),
+                cx - 24.0,
+                y + 56.0,
+                48.0,
+                40.0,
+                12.0,
+            );
+        }
         media_glyph(g, act, playing, cx, y + 76.0, 7.0, C { a: fade, ..p.text });
         hits.push((cx - 24.0, y + 56.0, 48.0, 40.0, Act::Do(act)));
     }
@@ -726,9 +766,10 @@ fn controls(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Ve
         let bx = x + i as f32 * (bw + 8.0);
         let lit = on == Some(true);
         g.fill_rr(bx, y, bw, 72.0, 14.0, if lit { accent } else { p.card });
+        hover(g, p, st, Act::Do(act), bx, y, bw, 72.0, 14.0);
         let fg = C {
             a: if on.is_some() { 1.0 } else { 0.35 },
-            ..if lit { white } else { p.text }
+            ..if lit { on_fill(accent) } else { p.text }
         };
         let (cx, cy) = (bx + bw / 2.0, y + 28.0);
         if act == Action::Mute {
@@ -736,7 +777,18 @@ fn controls(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Ve
         } else {
             radio_glyph(g, act, cx, cy, 13.0, fg)
         }
-        g.text(label, bx, y + 46.0, bw, 18.0, 11.0, 600, fg, Align::Center);
+        let weight = if lit { 700 } else { 600 }; // bold keeps white on the accent above 3:1
+        g.text(
+            label,
+            bx,
+            y + 46.0,
+            bw,
+            18.0,
+            11.0,
+            weight,
+            fg,
+            Align::Center,
+        );
         hits.push((bx, y, bw, 72.0, Act::Do(act)));
     }
 
@@ -812,6 +864,8 @@ fn controls(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Ve
     }
 
     let fy = h - FOOTER;
+    let quick = Act::Do(Action::QuickSettings);
+    hover(g, p, st, quick, 16.0, fy + 4.0, 190.0, 32.0, 10.0);
     g.text(
         "Windows Quick Settings",
         22.0,
@@ -820,10 +874,12 @@ fn controls(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Ve
         28.0,
         12.0,
         600,
-        accent,
+        link,
         Align::Left,
     );
-    hits.push((16.0, fy + 4.0, 190.0, 32.0, Act::Do(Action::QuickSettings)));
+    hits.push((16.0, fy + 4.0, 190.0, 32.0, quick));
+    let system = Act::Do(Action::SystemSettings);
+    hover(g, p, st, system, w - 104.0, fy + 4.0, 88.0, 32.0, 10.0);
     g.text(
         "Settings",
         w - 100.0,
@@ -835,16 +891,20 @@ fn controls(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Ve
         p.sub,
         Align::Right,
     );
-    hits.push((
-        w - 104.0,
-        fy + 4.0,
-        88.0,
-        32.0,
-        Act::Do(Action::SystemSettings),
-    ));
+    hits.push((w - 104.0, fy + 4.0, 88.0, 32.0, system));
 }
 
-fn about(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Vec<Hit>) {
+fn about(
+    g: &Gfx,
+    p: &Pal,
+    st: &State,
+    d: &Data,
+    accent: C,
+    link: C,
+    w: f32,
+    h: f32,
+    hits: &mut Vec<Hit>,
+) {
     // the mark: a small pill dock on an accent square
     let (mx, my, ms) = (24.0, 24.0, 56.0);
     g.fill_rr_grad(
@@ -903,7 +963,18 @@ fn about(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Vec<H
     if let Some(r) = &d.update {
         let t = format!("{} is out. Get it", r.version);
         let tw = g.measure(&t, 12.0, 600);
-        g.text(&t, 94.0, 72.0, tw, 18.0, 12.0, 600, accent, Align::Left);
+        hover(
+            g,
+            p,
+            st,
+            Act::Do(Action::Update),
+            90.0,
+            70.0,
+            tw + 8.0,
+            22.0,
+            6.0,
+        );
+        g.text(&t, 94.0, 72.0, tw, 18.0, 12.0, 600, link, Align::Left);
         hits.push((94.0, 72.0, tw, 18.0, Act::Do(Action::Update)));
     }
 
@@ -929,6 +1000,8 @@ fn about(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Vec<H
         );
     }
     g.fill_rr(24.0, h - 92.0, w - 48.0, 40.0, 12.0, p.card);
+    let folder = Act::Do(Action::SettingsFolder);
+    hover(g, p, st, folder, 24.0, h - 92.0, w - 48.0, 40.0, 12.0);
     g.text(
         "Open settings folder",
         24.0,
@@ -937,16 +1010,10 @@ fn about(g: &Gfx, p: &Pal, d: &Data, accent: C, w: f32, h: f32, hits: &mut Vec<H
         40.0,
         12.5,
         600,
-        accent,
+        link,
         Align::Center,
     );
-    hits.push((
-        24.0,
-        h - 92.0,
-        w - 48.0,
-        40.0,
-        Act::Do(Action::SettingsFolder),
-    ));
+    hits.push((24.0, h - 92.0, w - 48.0, 40.0, folder));
     g.text(
         "Inspired by lumabar.",
         24.0,
