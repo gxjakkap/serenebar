@@ -1401,6 +1401,7 @@ impl App {
             Act::EveryMonitor(e) => self.change(|s| s.every_monitor = e),
             Act::HideTaskbar(h) => self.change(|s| s.hide_taskbar = h),
             Act::Clock24(c) => self.change(|s| s.clock24 = c),
+            Act::SundayFirst(f) => self.change(|s| s.sunday_first = f),
             Act::Fahrenheit(f) => self.change(|s| s.fahrenheit = f),
             Act::Startup => system::set_startup(!system::startup_enabled()),
             Act::Screenshots => {

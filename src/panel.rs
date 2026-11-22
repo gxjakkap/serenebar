@@ -165,7 +165,19 @@ pub fn draw(g: &Gfx, st: &State, d: &Data, s: &Settings, w: f32, h: f32) -> Vec<
     let over_close = st.over == Some(Act::Close);
     close_button(g, &p, w - 30.0, 32.0, Act::Close, over_close, &mut hits);
     match st.kind {
-        Panel::Calendar => calendar(g, &p, st, d, accent, link, s.clock24, w, h, &mut hits),
+        Panel::Calendar => calendar(
+            g,
+            &p,
+            st,
+            d,
+            accent,
+            link,
+            s.clock24,
+            s.sunday_first,
+            w,
+            h,
+            &mut hits,
+        ),
         Panel::Weather => weather(g, &p, d, w),
         Panel::Claude | Panel::Codex | Panel::Antigravity | Panel::Cursor => {
             ai(g, &p, st.kind, d, w, h)
@@ -192,6 +204,7 @@ fn calendar(
     accent: C,
     link: C,
     h24: bool,
+    sunday_first: bool,
     w: f32,
     h: f32,
     hits: &mut Vec<Hit>,
@@ -235,19 +248,19 @@ fn calendar(
         hits.push((x, 16.0, 28.0, 32.0, act));
     }
 
-    // weekday pills, Monday first
+    // weekday pills, Monday or Sunday first; `col` is a weekday's column (weekday 0 is Sunday)
     let (gx, cw, ch, gap) = (24.0, 54.0, 50.0, 6.0);
-    let today_wd = (weekday(today) + 6) % 7;
+    let first_wd = if sunday_first { 0 } else { 1 };
+    let col = |wd: u32| (wd + 7 - first_wd) % 7;
+    let today_wd = col(weekday(today));
     let (ty, tm, _) = civil_from_days(today);
-    for (i, name) in ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
-        .iter()
-        .enumerate()
-    {
+    for i in 0..7 {
+        let name = day_name((i + first_wd) % 7).to_uppercase();
         let x = gx + i as f32 * (cw + gap);
         g.fill_rr(x, 70.0, cw, 26.0, 13.0, p.card);
-        let bold = i as u32 == today_wd && (ty, tm) == (y, m);
+        let bold = i == today_wd && (ty, tm) == (y, m);
         g.text(
-            name,
+            &name,
             x,
             70.0,
             cw,
@@ -260,7 +273,7 @@ fn calendar(
     }
 
     let first = days_from_civil(y, m, 1);
-    let lead = (weekday(first) + 6) % 7;
+    let lead = col(weekday(first));
     let (ny, nm) = add_month((y, m), 1);
     let len = days_from_civil(ny, nm, 1) - first;
     for i in 0..len {

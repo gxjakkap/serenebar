@@ -27,6 +27,7 @@ pub enum Act {
     EveryMonitor(bool),
     HideTaskbar(bool),
     Clock24(bool),
+    SundayFirst(bool),
     Fahrenheit(bool),
     Startup,
     Screenshots,
@@ -717,7 +718,7 @@ fn dock(g: &Gfx, c: &mut Ctx, s: &Settings, flags: &Flags, x0: f32, cw: f32) {
     c.title(g, "Dock", x0, 72.0);
     let seg_w = 200.0;
     let sx = x0 + cw - seg_w;
-    let rows: [(&str, Act, &str, Act, &str, bool); 5] = [
+    let rows: [(&str, Act, &str, Act, &str, bool); 6] = [
         (
             "Position",
             Act::Top(false),
@@ -758,31 +759,39 @@ fn dock(g: &Gfx, c: &mut Ctx, s: &Settings, flags: &Flags, x0: f32, cw: f32) {
             "12-hour",
             !s.clock24,
         ),
+        (
+            "Week starts",
+            Act::SundayFirst(false),
+            "Monday",
+            Act::SundayFirst(true),
+            "Sunday",
+            s.sunday_first,
+        ),
     ];
     for (i, (label, a0, n0, a1, n1, on1)) in rows.into_iter().enumerate() {
         let y = 104.0 + i as f32 * 38.0;
         c.label(g, label, x0, y, cw - seg_w);
         c.segmented(g, sx, y, seg_w, &[(n0, a0, !on1), (n1, a1, on1)]);
     }
-    c.title(g, "System", x0, 312.0);
-    c.label(g, "Launch at startup", x0, 344.0, cw - 60.0);
-    c.switch(g, x0 + cw - 40.0, 347.0, flags.startup, Act::Startup);
-    c.label(g, "Show in screenshots", x0, 382.0, cw - 60.0);
+    c.title(g, "System", x0, 350.0);
+    c.label(g, "Launch at startup", x0, 382.0, cw - 60.0);
+    c.switch(g, x0 + cw - 40.0, 385.0, flags.startup, Act::Startup);
+    c.label(g, "Show in screenshots", x0, 420.0, cw - 60.0);
     c.switch(
         g,
         x0 + cw - 40.0,
-        385.0,
+        423.0,
         flags.screenshots,
         Act::Screenshots,
     );
-    c.label(g, "Install updates automatically", x0, 438.0, cw - 60.0);
-    c.switch(g, x0 + cw - 40.0, 441.0, s.auto_update, Act::AutoUpdate);
+    c.label(g, "Install updates automatically", x0, 476.0, cw - 60.0);
+    c.switch(g, x0 + cw - 40.0, 479.0, s.auto_update, Act::AutoUpdate);
     for (t, y) in [
         (
             "Lets screenshots and recordings show the dock. The glass stops updating while it's on.",
-            406.0,
+            444.0,
         ),
-        ("While you're away, so the bar restarts unnoticed", 462.0),
+        ("While you're away, so the bar restarts unnoticed", 500.0),
     ] {
         g.text(t, x0, y, cw, 18.0, 10.5, 400, c.p.sub, Align::Left);
     }

@@ -425,6 +425,7 @@ pub struct Settings {
     pub every_monitor: bool, // a bar on every monitor, not just the primary one
     pub accent: usize,
     pub clock24: bool,
+    pub sunday_first: bool, // the calendar's weeks start on Sunday, not Monday
     pub hide_taskbar: bool,
     pub widgets: Vec<Slot>,
     /// The look picked for each tile that has a choice. Tiles not listed use their first.
@@ -465,6 +466,7 @@ impl Default for Settings {
             every_monitor: false,
             accent: 0,
             clock24: true,
+            sunday_first: false,
             hide_taskbar: false,
             widgets,
             variants: vec![],
@@ -529,6 +531,7 @@ impl Settings {
                         .unwrap_or(0)
                 }
                 "clock" => s.clock24 = v != "12",
+                "week" => s.sunday_first = v == "sun",
                 "taskbar" => s.hide_taskbar = v == "hidden",
                 "widgets" => {
                     s.widgets = vec![];
@@ -606,7 +609,7 @@ impl Settings {
             .map(|(w, x)| format!("{}:{}", w.id(), x.id()))
             .collect();
         format!(
-            "style={}\nsize={}\nedge={}\nwidth={}\nmonitors={}\naccent={}\nclock={}\ntaskbar={}\nupdates={}\nwidgets={}\nvariants={}\ncontrols={}\napp_order={}\npins={}\n\
+            "style={}\nsize={}\nedge={}\nwidth={}\nmonitors={}\naccent={}\nclock={}\nweek={}\ntaskbar={}\nupdates={}\nwidgets={}\nvariants={}\ncontrols={}\napp_order={}\npins={}\n\
              # weather: a city name, or latitude/longitude in decimal degrees to override it. units is c or f.\n\
              city={}\nlatitude={}\nlongitude={}\nunits={}\n\
              # calendar: the secret iCal (.ics) link from Google, Outlook or iCloud\ncalendar={}\n\
@@ -616,7 +619,7 @@ impl Settings {
              deepseek_key={}\n",
             self.style.name(), self.size.id(), if self.top { "top" } else { "bottom" },
             if self.full { "full" } else { "pill" }, if self.every_monitor { "all" } else { "primary" }, ACCENTS[self.accent].1.to_lowercase(),
-            if self.clock24 { 24 } else { 12 }, if self.hide_taskbar { "hidden" } else { "autohide" },
+            if self.clock24 { 24 } else { 12 }, if self.sunday_first { "sun" } else { "mon" }, if self.hide_taskbar { "hidden" } else { "autohide" },
             if self.auto_update { "auto" } else { "manual" },
             widgets.join(","), variants.join(","), controls.join(","), self.app_order.join("|"), self.pins.join("|"), self.city, opt(self.lat), opt(self.lon),
             if self.fahrenheit { "f" } else { "c" }, self.calendar, self.google_id, self.google_secret,
@@ -771,7 +774,7 @@ mod tests {
 
     #[test]
     fn settings_roundtrip() {
-        let s = parse_test("style=dusk\nsize=l\nedge=top\nwidth=full\nmonitors=all\naccent=green\nclock=12\ntaskbar=hidden\nwidgets=clock,|,apps,nope\ncity=Berlin\ncalendar=webcal://x/y.ics\nlatitude=52.5\nlongitude=13.4\nunits=f\n");
+        let s = parse_test("style=dusk\nsize=l\nedge=top\nwidth=full\nmonitors=all\naccent=green\nclock=12\nweek=sun\ntaskbar=hidden\nwidgets=clock,|,apps,nope\ncity=Berlin\ncalendar=webcal://x/y.ics\nlatitude=52.5\nlongitude=13.4\nunits=f\n");
         assert!(
             s.style == Style::Dusk
                 && s.size == Size::L
@@ -779,6 +782,7 @@ mod tests {
                 && s.full
                 && s.accent == 6
                 && !s.clock24
+                && s.sunday_first
                 && s.hide_taskbar
                 && s.fahrenheit
         );
@@ -793,6 +797,7 @@ mod tests {
                 && t.top
                 && t.full
                 && t.every_monitor
+                && t.sunday_first
                 && t.accent == 6
                 && t.lat == Some(52.5)
                 && t.widgets == s.widgets
