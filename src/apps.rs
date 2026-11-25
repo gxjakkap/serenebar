@@ -482,30 +482,15 @@ mod win {
             let target = match item.windows.iter().position(|&w| w == fg) {
                 Some(i) if item.windows.len() > 1 => item.windows[(i + 1) % item.windows.len()],
                 Some(_) => {
-                    // UIPI refuses this for an elevated window, so bring forward the window
-                    // behind it instead, which is the closest this process can get.
-                    if !ShowWindowAsync(fg, SW_MINIMIZE).as_bool() {
-                        let next = windows(HWND::default())
-                            .into_iter()
-                            .map(|(h, _)| h)
-                            .find(|h| !item.windows.contains(h));
-                        if let Some(next) = next {
-                            let _ = SetForegroundWindow(next);
-                        }
-                    }
+                    let _ = ShowWindow(fg, SW_MINIMIZE);
                     return;
                 }
                 None => item.top,
             };
-            // UIPI can block ShowWindow and SetForegroundWindow from this unelevated process on
-            // an elevated window, such as a game or its launcher. ShowWindowAsync only queues the
-            // change, and SwitchToThisWindow is the fallback for activation.
             if IsIconic(target).as_bool() {
-                let _ = ShowWindowAsync(target, SW_RESTORE);
+                let _ = ShowWindow(target, SW_RESTORE);
             }
-            if !SetForegroundWindow(target).as_bool() || GetForegroundWindow() != target {
-                SwitchToThisWindow(target, TRUE);
-            }
+            let _ = SetForegroundWindow(target);
         }
     }
 }
