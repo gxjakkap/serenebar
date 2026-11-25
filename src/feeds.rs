@@ -162,10 +162,25 @@ pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
             // its own clock, since a settings change restarts `minute`
             if Instant::now() >= next_release_check {
                 let found = crate::update::latest();
-                // a failed check (offline at login, say) tries again in an hour
-                let wait = if found.is_some() { 24 } else { 1 };
-                next_release_check = Instant::now() + Duration::from_secs(wait * 3600);
                 let newer = found.as_ref().is_some_and(crate::update::is_update);
+                // the update shows only with its installer in hand, so "Update to" installs
+                // instead of opening the release page while the download is still running
+                let mut fetched = true;
+                if let Some(r) = found.as_ref().filter(|_| newer) {
+                    let st = STATE.lock().unwrap();
+                    let have = st.update.as_ref() == Some(r) && st.installer.is_some();
+                    drop(st);
+                    if !have {
+                        let path = crate::update::download(r);
+                        fetched = path.is_some() || r.setup.is_none();
+                        let mut st = STATE.lock().unwrap();
+                        (st.update, st.installer) = (Some(r.clone()), path);
+                        changed = true;
+                    }
+                }
+                // a failed check or download (offline at login, say) tries again in an hour
+                let wait = if found.is_some() && fetched { 24 } else { 1 };
+                next_release_check = Instant::now() + Duration::from_secs(wait * 3600);
                 if asked {
                     STATE.lock().unwrap().update_note = match (&found, newer) {
                         (None, _) => "Couldn't reach GitHub",
@@ -174,21 +189,6 @@ pub fn spawn_feeds(hwnd: HWND) -> Sender<Msg> {
                     };
                     asked = false;
                     changed = true;
-                }
-                if let Some(r) = found.filter(|_| newer) {
-                    let mut st = STATE.lock().unwrap();
-                    if st.update.as_ref() != Some(&r) {
-                        (st.update, st.installer) = (Some(r.clone()), None);
-                        changed = true;
-                    }
-                    let have = st.installer.is_some();
-                    drop(st);
-                    // a failed download tries again at the next check
-                    if !have {
-                        let path = crate::update::download(&r);
-                        changed |= path.is_some();
-                        STATE.lock().unwrap().installer = path;
-                    }
                 }
             }
             if let Some(l) = codex_limits() {
